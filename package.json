@@ -15,7 +15,8 @@
     "test:perf": "node tools/perf-check.mjs",
     "test:load": "node tools/load-check.mjs",
     "test:frontend": "node tools/check-frontend.mjs",
-    "bench:world": "tsx tools/world-bench.ts"
+    "bench:world": "tsx tools/world-bench.ts",
+    "shoot:moods": "node tools/shoot-moods.mjs"
   },
   "dependencies": {
     "three": "^0.186.1"

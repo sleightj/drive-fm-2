@@ -428,7 +428,7 @@ export class Game {
     const r0 = performance.now();
     if (!this.opt.renderEvery || this.frame % this.opt.renderEvery === 0) {
       this.gpuTimer?.begin();
-      this.post.render(this.scene, this.camera, { dt, kmh: this.car.kmh, boost: this.car.boosting ? 1 : 0, night: st.night });
+      this.post.render(this.scene, this.camera, { dt: this.state === 'paused' ? 0 : dt, kmh: this.car.kmh, boost: this.car.boosting ? 1 : 0, night: st.night });
       this.gpuTimer?.end();
     }
     this.metrics.renderMs = performance.now() - r0;
