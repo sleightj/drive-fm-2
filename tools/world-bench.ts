@@ -1,9 +1,11 @@
 /**
- * World-building benchmark and checks, in Node (no GPU, nothing competing for the CPU):
+ * World-building benchmark and checks, in Node (no GPU):
  *   npx tsx tools/world-bench.ts [--seeds 7] [--km 5] [--gfx high] [--slice 4]
  * Streams the road and the city exactly as the game does while a point drives the road at
  * 30 m/s in 1/60 s frames, giving the world builder the level's per-frame slice. Reports:
- *  - cost per kind of job (count, mean, p95, max) and the worst frames of world building
+ *  - cost per kind of job (count, mean, p95, max) and the worst frames of world building;
+ *    fails on any frame over 20 ms of world work (wall time, confirmed by this thread's CPU time:
+ *    on a shared machine wall time also counts time spent waiting for a core)
  *  - footprint overlaps (buildings, car parks and lots must never overlap)
  *  - the road drawn right up to every fork near the car (no hole before the branches)
  *  - memory flatness: live chunks, footprints, cached runs and JS heap per km
@@ -32,6 +34,8 @@ import fs from 'node:fs';
 
 const args = process.argv.slice(2);
 const opt = (k: string, d: string) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i + 1] : d; };
+/** CPU time of this thread in ms (excludes time spent waiting for a core). */
+const threadCpuMs = () => { const u = process.threadCpuUsage(); return (u.user + u.system) / 1000; };
 const seeds = opt('seeds', '7').split(',').map(Number);
 const KM = Number(opt('km', '5'));
 const gfx = opt('gfx', 'high') as GraphicsLevel;
@@ -98,7 +102,7 @@ function run(seed: number) {
   skyline.stats.maxJobMs = 0;
   for (const k in samples) samples[k] = []; // only count streaming after load
   const skyMs: number[] = [];
-  const frames: { world: number; terrain: number; total: number; km: number; gen: number; sync: number; prep: number; maxBlock: number; job: string }[] = [];
+  const frames: { world: number; terrain: number; total: number; cpu: number; km: number; gen: number; sync: number; prep: number; maxBlock: number; job: string }[] = [];
   const mem: { km: number; chunks: number; foot: number; runs: number; heapMB: number; paths: number }[] = [];
   let lastKm = 0;
   // the road must be drawn right up to each fork (the branches start there): forks near the car
@@ -114,6 +118,7 @@ function run(seed: number) {
       s -= cur.forkS; cur = b;
     }
     const g0 = performance.now();
+    const c0 = threadCpuMs();
     if (Math.floor(driven / step) % 12 === 0) {
       stream.ensure(cur, s, 2);
       if (js && s > js.nose) stream.enter(cur);
@@ -134,7 +139,7 @@ function run(seed: number) {
     skyMs.push(w1 - k0);
     clip.update(pt.x, pt.z, L.terrainMs);
     const f1 = performance.now();
-    frames.push({ world: w1 - w0, terrain: f1 - w1, total: f1 - g0, km: driven / 1000, gen: f0 - g0, sync: w0 - f0, prep: chunks.stats.prepMs, maxBlock: clip.stats.lastMaxBlockMs, job: `${chunks.stats.frameMaxJob} ${chunks.stats.frameMaxJobMs.toFixed(1)}` });
+    frames.push({ world: w1 - w0, terrain: f1 - w1, total: f1 - g0, cpu: threadCpuMs() - c0, km: driven / 1000, gen: f0 - g0, sync: w0 - f0, prep: chunks.stats.prepMs, maxBlock: clip.stats.lastMaxBlockMs, job: `${chunks.stats.frameMaxJob} ${chunks.stats.frameMaxJobMs.toFixed(1)}` });
     if (frames.length % 30 === 0) {
       for (const p of gen.net.paths) {
         if (p.forkS === null) continue;
@@ -160,11 +165,16 @@ function run(seed: number) {
     return [k, { n: a.length, mean: +(a.reduce((x, y) => x + y, 0) / Math.max(1, a.length)).toFixed(2), p95: +pct(a, 0.95).toFixed(2), max: +(a[a.length - 1] ?? 0).toFixed(2) }];
   }));
   const tot = frames.map((f) => f.total).sort((a, b) => a - b);
-  const worst = [...frames].sort((a, b) => b.total - a.total).slice(0, 8).map((f) => `${f.total.toFixed(1)} (road gen ${f.gen.toFixed(1)}, land sync ${f.sync.toFixed(1)}, world ${f.world.toFixed(1)} [prep ${f.prep.toFixed(1)}, ${f.job}], land ${f.terrain.toFixed(1)} [block ${f.maxBlock.toFixed(1)}]) @${f.km.toFixed(2)} km`);
+  const worst = [...frames].sort((a, b) => b.cpu - a.cpu).slice(0, 8).map((f) => `cpu ${f.cpu.toFixed(1)}, wall ${f.total.toFixed(1)} (road gen ${f.gen.toFixed(1)}, land sync ${f.sync.toFixed(1)}, world ${f.world.toFixed(1)} [prep ${f.prep.toFixed(1)}, ${f.job}], land ${f.terrain.toFixed(1)} [block ${f.maxBlock.toFixed(1)}]) @${f.km.toFixed(2)} km`);
   return {
     seed, km: KM, gfx, slice, loadMs: Math.round(loadMs), frames: frames.length,
-    frameMs: { p50: +pct(tot, 0.5).toFixed(2), p95: +pct(tot, 0.95).toFixed(2), p99: +pct(tot, 0.99).toFixed(2), max: +tot[tot.length - 1].toFixed(2) },
-    over20: frames.filter((f) => f.total > 20).length, over10: frames.filter((f) => f.total > 10).length,
+    wallMs: { p50: +pct(tot, 0.5).toFixed(2), p95: +pct(tot, 0.95).toFixed(2), p99: +pct(tot, 0.99).toFixed(2), max: +tot[tot.length - 1].toFixed(2) },
+    // a frame fails when it is over 20 ms of wall time AND this thread did that much work in it:
+    // thread CPU time excludes time spent waiting for a core on a busy machine, but Linux counts
+    // it in scheduler ticks (4 ms), hence the 4 ms allowance
+    over20: frames.filter((f) => f.total > 20 && f.cpu > 16).length, over10: frames.filter((f) => f.total > 10 && f.cpu > 6).length,
+    cpuMs: (() => { const a = frames.map((f) => f.cpu).sort((x, y) => x - y); return { p50: +pct(a, 0.5).toFixed(2), p95: +pct(a, 0.95).toFixed(2), p99: +pct(a, 0.99).toFixed(2), max: +a[a.length - 1].toFixed(2) }; })(),
+    wallOver20: frames.filter((f) => f.total > 20).length,
     worst, jobs, overlaps, footprints: all.length, forks: { near: forksNear.size, gaps: forkGaps.size },
     skyline: { loadMs: Math.round(skyLoadMs), atLoad: skyAtLoad, now: skyline.stats, frameMax: +Math.max(...skyMs).toFixed(2), frameP95: +pct([...skyMs].sort((a, b) => a - b), 0.95).toFixed(2) },
     mem: mem.length > 6 ? [mem[0], mem[Math.floor(mem.length / 2)], mem[mem.length - 1]] : mem,
