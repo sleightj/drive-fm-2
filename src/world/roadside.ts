@@ -109,6 +109,12 @@ interface EdgeRun { type: EdgeType; pts: EdgePoint[]; seed: number }
 interface Decal { name: string; s: number; t: number; dir: 1 | -1; scaleW?: number; scaleL?: number }
 interface Wire { a: Anchor; b: Anchor; sag: number }
 
+/** A stretch of usable sidewalk along one side of a chunk (see Roadside.walkways). */
+export interface Walkway {
+  side: 1 | -1; // +1 = the path's left (t > 0)
+  pts: { s: number; x: number; z: number; y: number; nx: number; nz: number; inner: number; outer: number }[];
+}
+
 interface PropEntry { world: WorldGeom; inked: InkedGeom; lights: Light[]; anchors: Anchor[] }
 
 interface Plan {
@@ -192,6 +198,30 @@ export class Roadside {
     st.lod = 0;
     st.done = false;
     return this.buildJobs(c, st, 0);
+  }
+
+  /**
+   * Sidewalks of a chunk whose roadside is built, for pedestrians: per side, points along the
+   * kerb (world x/z, walking surface height y, outward normal) with the usable walk measured
+   * outward from the kerb line, plus the props standing on them (world x/z, radius). Empty
+   * until the chunk is finished; sides without a usable sidewalk are left out.
+   */
+  walkways(c: Chunk): { sides: Walkway[]; obstacles: { x: number; z: number; r: number }[] } {
+    const st = this.state.get(c.key);
+    if (!st || !st.done || !st.plan) return { sides: [], obstacles: [] };
+    const plan = st.plan;
+    const sides: Walkway[] = [];
+    for (const side of [1, -1] as const) {
+      let cur: Walkway | null = null;
+      for (const r of plan.rows) {
+        const sr = side > 0 ? r.L : r.R;
+        if (!sr || sr.walk < 1.2) { cur = null; continue; }
+        if (!cur) { cur = { side, pts: [] }; sides.push(cur); }
+        cur.pts.push({ s: r.s, x: sr.kx, z: sr.kz, y: sr.top, nx: sr.nx, nz: sr.nz, inner: KERB_BAND + 0.15, outer: sr.walk - 0.2 });
+      }
+    }
+    const obstacles = plan.props.map((pr) => ({ x: pr.x + c.ox, z: pr.z + c.oz, r: pr.type.startsWith('tree') ? 0.9 : pr.type === 'bus_stop' ? 2 : pr.type === 'bicycles' ? 1.4 : 0.6 }));
+    return { sides: sides.filter((w) => w.pts.length >= 2), obstacles };
   }
 
   needsUpgrade(c: Chunk): boolean {

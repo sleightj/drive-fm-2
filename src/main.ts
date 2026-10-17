@@ -1,5 +1,6 @@
 import { Game, GraphicsLevel } from './game';
 import { TIME_NAMES } from './render/environment';
+import type { Mood } from './world/moods';
 
 /**
  * Boot: read options (URL parameters are for tests and the benchmark), load, then hand over
@@ -31,6 +32,7 @@ const game = new Game(app, {
   simRate: num('rate', 1),
   freezeTime: q.has('freeze'),
   fixedStep: q.has('fixed'),
+  startMood: (q.get('mood') as Mood | null) ?? null,
 });
 
 const api = {

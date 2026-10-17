@@ -25,9 +25,12 @@ import { VEHICLE_SLOTS } from './render/actorMaterial';
 import { Input } from './input/input';
 import { Autopilot } from './debug/autopilot';
 import { MOOD_FOG, asphaltTone } from './world/moodLook';
-import { MOODS } from './world/moods';
+import { MOODS, Mood } from './world/moods';
 import { fbm1 } from './core/noise';
 import { hash32 } from './core/rng';
+import { Traffic } from './traffic/traffic';
+import { People } from './people/people';
+import { Post } from './render/post';
 import { clamp } from './core/math';
 
 export type GameState = 'boot' | 'title' | 'driving' | 'paused';
@@ -67,6 +70,8 @@ export interface GameOptions {
   freezeTime: boolean;
   /** every frame advances exactly 1/60 s of game time (benchmarks: same work per metre at any frame rate) */
   fixedStep?: boolean;
+  /** start in this mood's district (tests, contact sheets) */
+  startMood?: Mood | null;
 }
 
 export class Game {
@@ -84,6 +89,9 @@ export class Game {
   tex!: WorldLayers;
   roadside!: Roadside;
   foot = new Footprints();
+  traffic!: Traffic;
+  people!: People;
+  post: Post;
   car: Car;
   visual!: CarVisual;
   chase: ChaseCamera;
@@ -111,10 +119,11 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * this.level.scale);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     canvasParent.appendChild(this.renderer.domElement);
+    this.post = new Post(this.renderer, opt.level);
     this.camera = new PerspectiveCamera(74, window.innerWidth / window.innerHeight, 0.3, 6000);
     this.chase = new ChaseCamera(this.camera);
     window.addEventListener('resize', () => this.resize());
-    this.gen = new RoadGenerator({ seed: opt.seed });
+    this.gen = new RoadGenerator({ seed: opt.seed, startMood: opt.startMood ?? null });
     this.stream = new RoadStream(this.gen);
     this.wear = new WearField(opt.seed, (x, z) => this.gen.districts.moodAt(x, z));
     this.surface = new RoadSurface(this.gen.net, this.wear);
@@ -128,6 +137,7 @@ export class Game {
 
   resize() {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.post.setSize(window.innerWidth * this.renderer.getPixelRatio(), window.innerHeight * this.renderer.getPixelRatio());
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     env.uResolution.value.set(window.innerWidth * this.renderer.getPixelRatio(), window.innerHeight * this.renderer.getPixelRatio(), 1);
@@ -143,6 +153,8 @@ export class Game {
     const roadMat = makeRoadMaterial(wearTex, L.wearPx, L.detail);
     progress(0.2, 'car and textures');
     const texP = loadWorldLayers('./assets/tex', L.texScale);
+    this.traffic = new Traffic({ gen: this.gen, stream: this.stream, surface: this.surface, level: L, seed: this.opt.seed });
+    const trafficP = this.traffic.load();
     this.heroAsset = await loadVehicle('./assets/cars/hero.glb', VEHICLE_SLOTS);
     this.tex = await texP;
     const tl = (m: string) => this.tex.L(GROUND_LAYERS[m as keyof typeof GROUND_LAYERS]);
@@ -175,6 +187,9 @@ export class Game {
       removed: (c) => this.roadside.removed(c),
     }, (p, s) => this.tone(p, s));
     this.scene.add(this.chunks.root);
+    this.people = new People({ chunks: this.chunks, roadside: this.roadside, level: L, seed: this.opt.seed });
+    const peopleP = this.people.load();
+    this.scene.add(this.traffic.root, this.people.root);
     this.visual = new CarVisual(this.heroAsset);
     this.scene.add(this.visual.root, this.visual.shadow);
     // park on the start straight
@@ -189,6 +204,8 @@ export class Game {
     progress(0.7, 'city');
     let guard = 0;
     while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 50) { /* all */ }
+    progress(0.9, 'cars');
+    await Promise.all([trafficP, peopleP]);
     progress(0.95, 'ready');
     this.resize();
     this.applyEnv(0);
@@ -262,21 +279,25 @@ export class Game {
     else if (this.state === 'driving' && ctl.pause) this.setState('paused');
     else if (this.state === 'paused' && ctl.pause) this.setState('driving');
 
-    // ---- simulation (fixed step)
+    // ---- simulation (fixed step): the car while driving; traffic also behind the title
     const s0 = performance.now();
-    if (this.state === 'driving') {
+    if (this.state === 'driving' || this.state === 'title') {
+      const driving = this.state === 'driving';
       this.acc += dt * this.opt.simRate;
       let n = 0;
       while (this.acc >= DT && n < 12 * Math.max(1, this.opt.simRate)) {
-        const inp = this.opt.autopilot ? this.autopilot.drive(this.car) : { steer: ctl.steer, throttle: ctl.throttle, brake: ctl.brake, handbrake: ctl.handbrake, boost: ctl.boost };
-        this.lastInput = inp;
-        this.car.step(DT, inp);
-        this.simTime += DT;
+        if (driving) {
+          const inp = this.opt.autopilot ? this.autopilot.drive(this.car) : { steer: ctl.steer, throttle: ctl.throttle, brake: ctl.brake, handbrake: ctl.handbrake, boost: ctl.boost };
+          this.lastInput = inp;
+          this.car.step(DT, inp);
+          this.simTime += DT;
+        }
+        this.traffic.step(DT, this.car);
         this.acc -= DT;
         n++;
-        this.roadBookkeeping();
+        if (driving) this.roadBookkeeping();
       }
-      if (ctl.reset) this.resetCar();
+      if (driving && ctl.reset) this.resetCar();
     }
     this.metrics.simMs = performance.now() - s0;
 
@@ -305,13 +326,18 @@ export class Game {
     this.metrics.pendingTerrain = this.clip.update(this.camera.position.x + this.originX, this.camera.position.z + this.originZ, this.level.terrainMs * Math.max(1, this.opt.simRate));
     this.metrics.terrainMs = performance.now() - t0;
 
+    // ---- traffic and people (spawn out of view, move, place instances)
+    const live = this.state === 'paused' ? 0 : dt;
+    this.traffic.update(live, this.camera, this.originX, this.originZ, this.car);
+    this.people.update(live, this.camera, this.originX, this.originZ, this.car);
+
     // ---- rumble
     if (this.car.impact > 0.5) this.input.rumble(clamp(this.car.impact / 6, 0, 1), 0.5, 120);
     else if (this.car.bump > 0.6) this.input.rumble(0.15, clamp(this.car.bump / 3, 0, 0.6), 60);
     if (this.car.impact > 1.2) this.chase.shake = Math.min(1.5, this.car.impact * 0.2);
 
     const r0 = performance.now();
-    this.renderer.render(this.scene, this.camera);
+    this.post.render(this.scene, this.camera, { dt, kmh: this.car.kmh, boost: this.car.boosting ? 1 : 0, night: st.night });
     this.metrics.renderMs = performance.now() - r0;
     this.metrics.frameMs = performance.now() - f0;
     if (this.frame > 30) this.metrics.maxFrameMs = Math.max(this.metrics.maxFrameMs, this.metrics.frameMs);
@@ -333,7 +359,10 @@ export class Game {
     if (js && loc.s > js.nose) this.stream.enter(loc.path);
     const removed = this.stream.trim(loc.path, loc.s);
     for (const p of removed) this.wear.drop(p);
-    if (removed.length) this.roadside.trimRuns(new Set(this.gen.net.paths.map((q) => q.id)));
+    if (removed.length) {
+      this.roadside.trimRuns(new Set(this.gen.net.paths.map((q) => q.id)));
+      this.traffic.pathsRemoved(removed.map((q) => q.id));
+    }
     this.wear.trim(loc.path, loc.s - 400);
   }
   private stepCount = 0;

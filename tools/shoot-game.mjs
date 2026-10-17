@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Runs the real game headless and takes screenshots.
- *   node tools/shoot-game.mjs <out dir> [--seed 1] [--time day] [--gfx high] [--size 1280x720]
+ *   node tools/shoot-game.mjs <out dir> [--seed 1] [--time day] [--gfx high] [--size 1280x720] [--mood docks]
  *        [--drive 20] [--shots 4] [--every 5] [--rate 1] [--title] [--url http://...]
  * --drive N   drive N seconds of game time on autopilot before the first shot
  * --shots/--every  further shots every K seconds of game time
@@ -35,6 +35,7 @@ page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') 
 page.on('pageerror', (e) => { errors.push(String(e)); console.error('[pageerror]', e); });
 const params = new URLSearchParams({ seed: opt('seed', '1'), time: opt('time', 'day'), gfx: opt('gfx', 'high'), rate: opt('rate', '1') });
 if (!flag('title')) params.set('auto', '1');
+if (opt('mood', '')) params.set('mood', opt('mood', ''));
 if (flag('freeze')) params.set('freeze', '1');
 const t0 = Date.now();
 await page.goto(`${base}?${params}`);
