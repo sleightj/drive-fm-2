@@ -41,12 +41,12 @@ for (const f of files) {
 const names = new Set();
 for (const l of all) { if (names.has(l.name)) throw new Error('duplicate layer ' + l.name); names.add(l.name); }
 const sheets = Math.max(1, Math.ceil(all.length / PER));
-const manifest = { size: S, emitSize: E, perSheet: PER, grid: GRID, sheets, count: all.length, layers: {} };
+const manifest = { size: S, emitSize: E, perSheet: PER, grid: GRID, sheets, count: all.length, layers: {}, cutout: [] };
 const t0 = Date.now();
 for (let k = 0; k < sheets; k++) {
   const A = createCanvas(S * GRID, S * GRID), Ag = A.getContext('2d');
   const M = createCanvas(E * GRID, E * GRID), Mg = M.getContext('2d');
-  Ag.fillStyle = '#ff00ff'; Ag.fillRect(0, 0, A.width, A.height);
+  Ag.clearRect(0, 0, A.width, A.height);
   Mg.clearRect(0, 0, M.width, M.height);
   for (let i = 0; i < PER; i++) {
     const idx = k * PER + i;
@@ -55,6 +55,11 @@ for (let k = 0; k < sheets; k++) {
     manifest.layers[l.name] = idx;
     const c = createCanvas(S, S), g = c.getContext('2d');
     l.albedo(g, S, rngFor(l.name));
+    // layers with any texel below half coverage are cutouts (drawn with alpha test)
+    const px = g.getImageData(0, 0, S, S).data;
+    let cut = false;
+    for (let p = 3; p < px.length; p += 4 * 7) if (px[p] < 128) { cut = true; break; }
+    if (cut) manifest.cutout.push(idx);
     Ag.drawImage(c, (i % GRID) * S, Math.floor(i / GRID) * S);
     if (l.emit) {
       const e = createCanvas(E, E), eg = e.getContext('2d');
