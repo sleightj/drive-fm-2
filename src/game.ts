@@ -5,6 +5,10 @@ import { RoadSurface } from './road/surface';
 import { WearField } from './road/wear';
 import { Path } from './road/path';
 import { ChunkManager } from './world/chunks';
+import { TerrainField } from './world/terrain';
+import { TerrainClipmap } from './world/terrainClipmap';
+import { loadWorldLayers, WorldLayers } from './render/worldTextures';
+import { GROUND_LAYERS, GROUND_TILES, SURFACES } from './world/kit/street';
 import { makeRoadMaterial, makeWearPool } from './render/roadMaterial';
 import { makeSky } from './render/sky';
 import { env, applyTimeOfDay, TIME_NAMES } from './render/environment';
@@ -33,12 +37,15 @@ export interface LevelSpec {
   wearH: number;
   budgetMs: number; // world-build slice
   detail: number;
+  terrainLevels: number;
+  terrainMs: number; // terrain slice
+  texScale: number; // world texture size
 }
 
 export const LEVELS: Record<GraphicsLevel, LevelSpec> = {
-  high: { scale: 1, radius: 1100, wearLayers: 40, wearPx: 8, wearW: 512, wearH: 256, budgetMs: 4, detail: 1 },
-  low: { scale: 0.85, radius: 800, wearLayers: 32, wearPx: 5, wearW: 256, wearH: 128, budgetMs: 3, detail: 0.6 },
-  verylow: { scale: 0.6, radius: 500, wearLayers: 24, wearPx: 4, wearW: 256, wearH: 128, budgetMs: 2, detail: 0.3 },
+  high: { scale: 1, radius: 1100, wearLayers: 40, wearPx: 8, wearW: 512, wearH: 256, budgetMs: 4, detail: 1, terrainLevels: 5, terrainMs: 1.5, texScale: 1 },
+  low: { scale: 0.85, radius: 800, wearLayers: 32, wearPx: 5, wearW: 256, wearH: 128, budgetMs: 3, detail: 0.6, terrainLevels: 4, terrainMs: 1, texScale: 0.5 },
+  verylow: { scale: 0.6, radius: 500, wearLayers: 24, wearPx: 4, wearW: 256, wearH: 128, budgetMs: 2, detail: 0.3, terrainLevels: 4, terrainMs: 0.8, texScale: 0.5 },
 };
 
 const DT = 1 / 120;
@@ -64,6 +71,9 @@ export class Game {
   surface: RoadSurface;
   wear: WearField;
   chunks!: ChunkManager;
+  terrain: TerrainField;
+  clip!: TerrainClipmap;
+  tex!: WorldLayers;
   car: Car;
   visual!: CarVisual;
   chase: ChaseCamera;
@@ -79,7 +89,7 @@ export class Game {
   frame = 0;
   simTime = 0;
   lastInput: CarInput = { steer: 0, throttle: 0, brake: 0, handbrake: false, boost: false };
-  metrics = { frameMs: 0, simMs: 0, worldMs: 0, renderMs: 0, maxFrameMs: 0, pendingChunks: 0 };
+  metrics = { frameMs: 0, simMs: 0, worldMs: 0, terrainMs: 0, renderMs: 0, maxFrameMs: 0, pendingChunks: 0, pendingTerrain: 0 };
   heroAsset!: VehicleAsset;
   onState: ((s: GameState) => void) | null = null;
   private moodW = [0, 0, 0, 0, 0, 0];
@@ -98,6 +108,7 @@ export class Game {
     this.stream = new RoadStream(this.gen);
     this.wear = new WearField(opt.seed, (x, z) => this.gen.districts.moodAt(x, z));
     this.surface = new RoadSurface(this.gen.net, this.wear);
+    this.terrain = new TerrainField(opt.seed, this.gen.districts);
     this.car = new Car(this.surface);
     this.input = new Input();
     this.autopilot = new Autopilot(this.stream, opt.seed);
@@ -124,8 +135,20 @@ export class Game {
       radius: L.radius, wearRadius: 260, wearLayers: L.wearLayers, wearW: L.wearW, wearH: L.wearH, wearPx: L.wearPx,
     }, {}, (p, s) => this.tone(p, s));
     this.scene.add(this.chunks.root);
-    progress(0.2, 'car');
+    progress(0.2, 'car and textures');
+    const texP = loadWorldLayers('./assets/tex', L.texScale);
     this.heroAsset = await loadVehicle('./assets/cars/hero.glb', VEHICLE_SLOTS);
+    this.tex = await texP;
+    const tl = (m: string) => this.tex.L(GROUND_LAYERS[m as keyof typeof GROUND_LAYERS]);
+    this.clip = new TerrainClipmap(this.terrain, {
+      levels: L.terrainLevels,
+      moodLayers: MOODS.map((m) => tl(m)),
+      moodTiles: MOODS.map((m) => GROUND_TILES[m]),
+      slopeLayer: this.tex.L(SURFACES.earth.layer),
+      slopeTile: SURFACES.earth.tile,
+      albedo: this.tex.albedo,
+    });
+    this.scene.add(this.clip.root);
     this.visual = new CarVisual(this.heroAsset);
     this.scene.add(this.visual.root, this.visual.shadow);
     // park on the start straight
@@ -136,6 +159,9 @@ export class Game {
     // build the nearest chunks before the first frame
     let guard = 0;
     while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 3) { /* all */ }
+    progress(0.7, 'land');
+    this.syncTerrain();
+    this.clip.update(this.car.x, this.car.z, 1e9, true);
     progress(0.95, 'ready');
     this.resize();
     this.applyEnv(0);
@@ -166,6 +192,13 @@ export class Game {
     this.originX = Math.round(x / 100) * 100;
     this.originZ = Math.round(z / 100) * 100;
     this.chunks.rebase(this.originX, this.originZ);
+    this.clip?.setOrigin(this.originX, this.originZ);
+  }
+
+  /** Keep the land's road stations in step with the live network. */
+  private syncTerrain() {
+    const rects = this.terrain.sync(this.gen.net.paths, (p) => Math.min(this.gen.finalEnd(p), p.forkS ?? Infinity, p.sampleEnd));
+    if (rects.length) this.clip.invalidate(rects);
   }
 
   private applyEnv(dt: number) {
@@ -240,6 +273,10 @@ export class Game {
     const w0 = performance.now();
     this.metrics.pendingChunks = this.chunks.update(this.car.x, this.car.z, this.level.budgetMs * Math.max(1, this.opt.simRate));
     this.metrics.worldMs = performance.now() - w0;
+    const t0 = performance.now();
+    this.syncTerrain();
+    this.metrics.pendingTerrain = this.clip.update(this.camera.position.x + this.originX, this.camera.position.z + this.originZ, this.level.terrainMs * Math.max(1, this.opt.simRate));
+    this.metrics.terrainMs = performance.now() - t0;
 
     // ---- rumble
     if (this.car.impact > 0.5) this.input.rumble(clamp(this.car.impact / 6, 0, 1), 0.5, 120);

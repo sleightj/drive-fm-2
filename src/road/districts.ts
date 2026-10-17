@@ -1,5 +1,5 @@
 import { hash32 } from '../core/rng';
-import { MOODS, Mood } from '../world/moods';
+import { MOODS, Mood, MOOD_INDEX } from '../world/moods';
 import { PLACES, Place } from '../world/places';
 import { smoothstep } from '../core/math';
 
@@ -74,17 +74,33 @@ export class Districts {
 
   /**
    * Mood weights at a point (sum 1): the nearest district dominates; within `blend` metres
-   * of a border the neighbour's mood mixes in.
+   * of a border the neighbour's mood mixes in. Every district site's weight is a continuous
+   * function of position (it depends only on how much farther that site is than the nearest),
+   * so the blend has no seams where the second-nearest district changes.
    */
   moodWeights(x: number, z: number, out: number[] = [0, 0, 0, 0, 0, 0], blend = 260): number[] {
     for (let i = 0; i < 6; i++) out[i] = 0;
-    const { a, b, da, db } = this.nearest2(x, z);
-    const border = (db - da) / 2; // approx distance to the bisector
-    const wb = 0.5 * (1 - smoothstep(0, blend, border));
-    out[MOODS.indexOf(a.mood)] += 1 - wb;
-    out[MOODS.indexOf(b.mood)] += wb;
+    const ci = Math.floor(x / DISTRICT_CELL), cj = Math.floor(z / DISTRICT_CELL);
+    const ds = this._d9, ms = this._m9;
+    let da = Infinity, n = 0;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+      const d = this.cell(ci + di, cj + dj);
+      const dd = Math.hypot(d.x - x, d.z - z);
+      ds[n] = dd; ms[n] = MOOD_INDEX[d.mood]; n++;
+      if (dd < da) da = dd;
+    }
+    let sum = 0;
+    for (let k = 0; k < n; k++) {
+      const w = 1 - smoothstep(0, blend, (ds[k] - da) / 2);
+      if (w <= 0) continue;
+      out[ms[k]] += w;
+      sum += w;
+    }
+    for (let i = 0; i < 6; i++) out[i] /= sum;
     return out;
   }
+  private _d9 = new Float64Array(9);
+  private _m9 = new Int8Array(9);
 
   /** The dominant mood at a point. */
   moodAt(x: number, z: number): Mood {
