@@ -71,6 +71,7 @@ for (const seed of seeds) {
   const r = {
     seed: Number(seed), km: +(end.odo / 1000).toFixed(1), gameSeconds: Math.round(end.t), wallSeconds: Math.round((Date.now() - t0) / 1000),
     samples: samples.length, offRoadSamples: off, maxPending: Math.max(...samples.map((s) => s.pending)), wallHits: end.wallHits,
+    boostPerKm: { wear: +(end.boostWear / (end.odo / 1000)).toFixed(3), air: +(end.boostAir / (end.odo / 1000)).toFixed(3) },
     trend, errors: errors.slice(0, 10), stalled,
   };
   const fails = [];

@@ -151,8 +151,21 @@ elevations (inverse-distance with a road-corridor bench) plus gentle noise, buil
 around the camera (LOD by distance), so the city sits in rolling land and every hill the
 road climbs is a hill in the land.
 
-**Far skyline.** Cells (40 m) out to 2 km filled with simplified painted buildings per the
-district mood, avoiding road corridors, populated only behind the planning frontier.
+**City fill and skyline** (`src/world/skyline.ts`). The land behind the frontage is cut into
+160 m blocks, each holding a few far buildings (≤ ~80 triangles, the same painted layers,
+lit windows at night) chosen by the district mood: towers downtown, mid-rise midtown, low
+roofs in the old town and suburbs, sheds and quay cranes at the docks, almost nothing at the
+edge. Every building keeps clear of every known road corridor by more than the roadside's
+own depth, so the fill never stands on a road or in the frontage, and steep ground stays
+empty. Blocks merge into 480 m tiles (one draw call each) out to the level's skyline radius.
+The road is generated kilometres ahead, so a new corridor is known long before it is near:
+tiles it touches are rebuilt (old mesh kept until the new one is ready); removed roads
+(trimmed behind, an untaken branch) leave their strip empty rather than fill in while in view.
+
+**Closed road ends.** Where the drawn road stops for good (the start of the network, a road
+whose trunk was trimmed away, the end of a fork's untaken branch) a barricade of A-frame
+barriers, no-entry signs and a works board crosses the lanes, and the car meets a solid wall
+there (`RoadGenerator.closedEnds`, `RoadSurface.endDepth`).
 
 **Traffic.** Kinematic lane followers (IDM) on the live paths in both directions; lane
 changes for merges and overtakes; branch choice at forks; yield logic at the fork crossing;
@@ -236,7 +249,7 @@ Budgets are sized for an Intel Iris Xe (96 EU ≈ 2.0 TFLOPS, ~60 GB/s shared) o
 | traffic cars | ≤ 48 | ≤ 30 | ≤ 16 | instanced, 2 draws/model |
 | people | ≤ 40 | ≤ 22 | ≤ 10 | 2 draws each (skinned) |
 | near city radius | 1,100 m | 800 m | 500 m | chunks ahead |
-| skyline radius | 2,000 m | 1,500 m | 1,000 m | |
+| skyline radius | 3,000 m | 2,200 m | 1,400 m | city fill + skyline tiles; tall towers still read through the fog at 3 km |
 | world-build slice | 4 ms | 3 ms | 2 ms | no frame over 20 ms from world building |
 | JS frame time | ≤ 7 ms | ≤ 6 ms | ≤ 5 ms | leaves ≥ 7 ms for the GPU process |
 

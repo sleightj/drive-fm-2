@@ -96,14 +96,18 @@ const api = {
       heapMB: ((performance as any).memory?.usedJSHeapSize ?? 0) / 1e6,
       geometries: r.memory.geometries, textures: r.memory.textures, calls: r.render.calls, tris: r.render.triangles,
       chunks: game.chunks.chunks.size, pending: game.metrics.pendingChunks, paths: game.gen.net.paths.length,
-      foot: game.foot.count, sky: game.skyline.stats.tiles, wallHits: c.stats.wallHits, maxFrameMs: game.metrics.maxFrameMs,
+      foot: game.foot.count, sky: game.skyline.stats.tiles, wallHits: c.stats.wallHits, boostWear: c.stats.wearGain, boostAir: c.stats.airGain, maxFrameMs: game.metrics.maxFrameMs,
       traffic: (game.traffic as any).stats ?? null, people: (game.people as any).stats ?? null,
     };
   },
 };
 (window as any).__DRIVE_FM__ = api;
 
-game.load((p, label) => fe.boot(p, label)).then(() => {
+// load phases (ms since navigation) for tools/load-check.mjs
+const phases: { label: string; t: number }[] = [{ label: 'script', t: performance.now() }];
+(window as any).__DRIVE_FM_PHASES__ = phases;
+game.load((p, label) => { phases.push({ label, t: performance.now() }); fe.boot(p, label); }).then(() => {
+  phases.push({ label: 'title', t: performance.now() });
   fe.boot(1, 'ready');
   fe.bootDone();
   if (bench) { benchOverlay = new BenchOverlay(game, num('benchSeconds', 90)); game.gpuTimer = benchOverlay.timer; }

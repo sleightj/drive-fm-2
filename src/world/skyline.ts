@@ -217,11 +217,16 @@ export class Skyline {
 
   /** Build one far building into a tile (local frame at ox, oz). */
   private place(w: WorldGeom, b: Spec, ox: number, oz: number) {
-    // stand on the lowest of the centre and two corners (the base runs 4 m below)
+    // the ground under the footprint: steep ground stays empty; otherwise stand a little above
+    // the lowest point (the base runs 4 m below, so the downhill side never floats)
     const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
     const g = this.d.ground;
     const ex = (b.W / 2) * c + (b.D / 2) * s, ez = (b.D / 2) * c - (b.W / 2) * s;
-    const y = Math.min(g(b.x, b.z), g(b.x + ex, b.z + ez), g(b.x - ex, b.z - ez));
+    const fx = (b.W / 2) * c - (b.D / 2) * s, fz = -(b.D / 2) * c - (b.W / 2) * s;
+    const h0 = g(b.x, b.z), h1 = g(b.x + ex, b.z + ez), h2 = g(b.x - ex, b.z - ez), h3 = g(b.x + fx, b.z + fz), h4 = g(b.x - fx, b.z - fz);
+    const lo = Math.min(h0, h1, h2, h3, h4), hi = Math.max(h0, h1, h2, h3, h4);
+    if (hi - lo > Math.min(8, b.H * 0.5)) return;
+    const y = Math.min((lo + hi) / 2, lo + 3.5);
     // far building frame: front face at z = 0, back at -D; centred on the slot
     w.m.makeRotationY(b.yaw).setPosition(b.x + s * (b.D / 2) - ox, y, b.z + c * (b.D / 2) - oz);
     buildFarBuilding(w, this.d.L, { mood: b.mood, width: b.W, depth: b.D, height: b.H, seed: b.seed });
