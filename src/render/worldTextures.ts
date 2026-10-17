@@ -18,7 +18,10 @@ async function sheetPixels(url: string, tile: number, grid: number, out: Uint8Ar
   const g = c.getContext('2d', { willReadFrequently: true })!;
   for (let i = 0; i < count; i++) {
     const sx = (i % grid) * tile, sy = Math.floor(i / grid) * tile;
+    g.setTransform(1, 0, 0, 1, 0, 0);
     g.clearRect(0, 0, outSize, outSize);
+    // Flip vertically: painters paint with canvas-up = wall-up, while texture v runs upward.
+    g.setTransform(1, 0, 0, -1, 0, outSize);
     g.drawImage(bmp, sx, sy, tile, tile, 0, 0, outSize, outSize);
     const d = g.getImageData(0, 0, outSize, outSize).data;
     out.set(d, (firstLayer + i) * outSize * outSize * 4);
