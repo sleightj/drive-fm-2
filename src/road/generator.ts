@@ -810,6 +810,9 @@ export class RoadGenerator {
   finalEnd(p: Path): number {
     const v = p.profile.vpis;
     if (v.length < 2) return 0;
+    // a road that has forked grows no further: once its profile runs past the fork, nothing is
+    // added after its last VPI (an end, with no vertical curve), so it is final all the way
+    if (p.forkS !== null && v[v.length - 1].s >= p.forkS) return v[v.length - 1].s;
     const st = p.gen as GenState;
     return v[v.length - 1].s - 0.5 * st.dLast;
   }

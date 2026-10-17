@@ -5,6 +5,7 @@
  * 30 m/s in 1/60 s frames, giving the world builder the level's per-frame slice. Reports:
  *  - cost per kind of job (count, mean, p95, max) and the worst frames of world building
  *  - footprint overlaps (buildings, car parks and lots must never overlap)
+ *  - the road drawn right up to every fork near the car (no hole before the branches)
  *  - memory flatness: live chunks, footprints, cached runs and JS heap per km
  */
 import { RoadGenerator } from '../src/road/generator';
@@ -100,6 +101,9 @@ function run(seed: number) {
   const frames: { world: number; terrain: number; total: number; km: number; gen: number; sync: number; prep: number; maxBlock: number; job: string }[] = [];
   const mem: { km: number; chunks: number; foot: number; runs: number; heapMB: number; paths: number }[] = [];
   let lastKm = 0;
+  // the road must be drawn right up to each fork (the branches start there): forks near the car
+  const forksNear = new Set<number>(), forkGaps = new Set<number>();
+  const fq = { x: 0, z: 0, h: 0, k: 0 };
   const step = 30 / 60; // 30 m/s, 60 fps
   while (driven < KM * 1000) {
     s += step; driven += step;
@@ -131,6 +135,17 @@ function run(seed: number) {
     clip.update(pt.x, pt.z, L.terrainMs);
     const f1 = performance.now();
     frames.push({ world: w1 - w0, terrain: f1 - w1, total: f1 - g0, km: driven / 1000, gen: f0 - g0, sync: w0 - f0, prep: chunks.stats.prepMs, maxBlock: clip.stats.lastMaxBlockMs, job: `${chunks.stats.frameMaxJob} ${chunks.stats.frameMaxJobMs.toFixed(1)}` });
+    if (frames.length % 30 === 0) {
+      for (const p of gen.net.paths) {
+        if (p.forkS === null) continue;
+        p.pointAt(p.forkS, fq);
+        if (Math.hypot(fq.x - pt.x, fq.z - pt.z) > 250) continue;
+        forksNear.add(p.id);
+        let last = -Infinity;
+        for (const c of chunks.chunks.values()) if (c.path === p) last = Math.max(last, c.s1);
+        if (last !== p.forkS) forkGaps.add(p.id);
+      }
+    }
     if (driven - lastKm >= 1000) {
       lastKm = driven;
       mem.push({ km: Math.round(driven / 1000), chunks: chunks.chunks.size, foot: foot.count, runs: (roadside as any).runs.size, heapMB: Math.round(process.memoryUsage().heapUsed / 1e6), paths: gen.net.paths.length });
@@ -150,7 +165,7 @@ function run(seed: number) {
     seed, km: KM, gfx, slice, loadMs: Math.round(loadMs), frames: frames.length,
     frameMs: { p50: +pct(tot, 0.5).toFixed(2), p95: +pct(tot, 0.95).toFixed(2), p99: +pct(tot, 0.99).toFixed(2), max: +tot[tot.length - 1].toFixed(2) },
     over20: frames.filter((f) => f.total > 20).length, over10: frames.filter((f) => f.total > 10).length,
-    worst, jobs, overlaps, footprints: all.length,
+    worst, jobs, overlaps, footprints: all.length, forks: { near: forksNear.size, gaps: forkGaps.size },
     skyline: { loadMs: Math.round(skyLoadMs), atLoad: skyAtLoad, now: skyline.stats, frameMax: +Math.max(...skyMs).toFixed(2), frameP95: +pct([...skyMs].sort((a, b) => a - b), 0.95).toFixed(2) },
     mem: mem.length > 6 ? [mem[0], mem[Math.floor(mem.length / 2)], mem[mem.length - 1]] : mem,
   };
@@ -160,6 +175,6 @@ let bad = 0;
 for (const seed of seeds) {
   const r = run(seed);
   console.log(JSON.stringify(r, null, 1));
-  if (r.over20 || r.overlaps) bad++;
+  if (r.over20 || r.overlaps || r.forks.gaps) bad++;
 }
 process.exit(bad ? 1 : 0);

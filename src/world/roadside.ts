@@ -735,7 +735,7 @@ export class Roadside {
     // ---- small things on sidewalks (against the frontage)
     const r = new Rng(hash32(seed, 0x4a, p.id, c.ci));
     for (const side of [1, -1] as const) {
-      const n = r.int(0, 2);
+      const n = c.s1 - c.s0 > 8 ? r.int(0, 2) : 0; // (a part chunk before a fork can be short)
       for (let i = 0; i < n; i++) {
         const s = r.range(c.s0 + 2, c.s1 - 2);
         const sr = this.sideAt(plan, side, s);

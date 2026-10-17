@@ -51,6 +51,8 @@ export interface ChunkHooks {
   removed?(c: Chunk): void;
 }
 
+/** Index of the chunk that ends at a fork at arc length `f` (stretched by up to 1 m rather than leave a sliver). */
+const forkChunk = (f: number) => Math.ceil((f - 1) / WEAR_CHUNK) - 1;
 const _pt = { x: 0, z: 0, h: 0, k: 0 };
 const _xs: CrossSection = { kerbL: 0, kerbR: 0, median: 0, hatch: 0, laneW: 0, lanesOut: 0, lanesIn: 0, margin: 0, crown: 0, cls: 'back', clsBlend: 1, fromCls: 'back' };
 
@@ -99,6 +101,27 @@ export class ChunkManager {
   }
 
   /**
+   * The last chunk of a path that can be built. A road that is still growing is drawn in whole
+   * chunks up to its final end; a road that forks ends there for good, so its last chunk runs
+   * to the fork (a part chunk, or one stretched by up to a metre), where the branches start.
+   */
+  private lastChunk(p: Path): number {
+    const end = this.buildEnd(p);
+    const whole = Math.floor(end / WEAR_CHUNK) - 1;
+    if (p.forkS === null) return whole;
+    const k = forkChunk(p.forkS);
+    // the chunk that runs to the fork waits until the road is built that far (samples are a
+    // metre apart: the last fraction of a metre is the straight approach, extrapolated exactly)
+    return end >= p.forkS - 1 ? k : Math.min(whole, k - 1);
+  }
+
+  /** Arc length where chunk `ci` of `p` ends (see lastChunk). */
+  chunkEnd(p: Path, ci: number): number {
+    if (p.forkS !== null && ci === forkChunk(p.forkS)) return p.forkS;
+    return (ci + 1) * WEAR_CHUNK;
+  }
+
+  /**
    * Bring the chunk set up to date around (cx, cz) within `budgetMs`. Returns the number of
    * chunks still waiting to be built.
    */
@@ -107,10 +130,9 @@ export class ChunkManager {
     const want = new Map<string, { p: Path; ci: number; d: number }>();
     const R = this.opt.radius;
     for (const p of this.gen.net.paths) {
-      const end = this.buildEnd(p);
-      const c0 = Math.ceil(p.base / WEAR_CHUNK), c1 = Math.floor(end / WEAR_CHUNK) - 1;
+      const c0 = Math.ceil(p.base / WEAR_CHUNK), c1 = this.lastChunk(p);
       for (let ci = c0; ci <= c1; ci++) {
-        p.pointAt(ci * WEAR_CHUNK + WEAR_CHUNK / 2, _pt);
+        p.pointAt((ci * WEAR_CHUNK + this.chunkEnd(p, ci)) / 2, _pt);
         const d = Math.hypot(_pt.x - cx, _pt.z - cz);
         if (d < R) want.set(`${p.id}:${ci}`, { p, ci, d });
       }
@@ -185,7 +207,7 @@ export class ChunkManager {
   }
 
   private build(key: string, p: Path, ci: number, d: number) {
-    const s0 = ci * WEAR_CHUNK, s1 = s0 + WEAR_CHUNK;
+    const s0 = ci * WEAR_CHUNK, s1 = this.chunkEnd(p, ci);
     // origin: the chunk's own start point (keeps vertex floats small)
     p.pointAt(s0, _pt);
     const ox = Math.round(_pt.x), oz = Math.round(_pt.z);
