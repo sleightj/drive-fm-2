@@ -42,7 +42,10 @@ interface Level {
 }
 
 export interface ClipmapOptions {
+  /** levels allocated (the most any graphics level uses) */
   levels: number;
+  /** levels drawn and kept current (default: all); changeable with setActiveLevels */
+  active?: number;
   /** ground layers per mood (texture array indices) and their tile sizes in metres */
   moodLayers: number[];
   moodTiles: number[];
@@ -213,9 +216,12 @@ export class TerrainClipmap {
   private blockM = new Uint8Array(B * B * 8);
   private origin = new Vector2();
   stats = { blocks: 0, ms: 0, pendingBlocks: 0, lastMaxBlockMs: 0, maxBlockMs: 0 };
+  /** levels drawn and kept current; the rest are hidden and skipped */
+  active: number;
 
   constructor(public field: TerrainField, public opt: ClipmapOptions) {
     const L = opt.levels, n = CLIP_N;
+    this.active = Math.min(L, opt.active ?? L);
     const H = new Float32Array(n * n * L), M = new Uint8Array(n * n * 4 * L * 2);
     for (let l = 0; l < L; l++) {
       const gx = new Int32Array(n * n).fill(INVALID), gz = new Int32Array(n * n).fill(INVALID);
@@ -252,7 +258,7 @@ export class TerrainClipmap {
           uMat: { value: this.matTex },
           uAlbedo: { value: opt.albedo },
           uLevel: { value: l },
-          uLevels: { value: L },
+          uLevels: { value: this.active },
           uSpacing: { value: lv.sp },
           uC: { value: lv.shown },
           uFineOn: { value: 0 },
@@ -281,6 +287,24 @@ export class TerrainClipmap {
   }
 
   setOrigin(x: number, z: number) { this.origin.set(x, z); }
+
+  /**
+   * Draw and maintain only the finest `n` levels (graphics settings). Hidden levels keep
+   * tracking invalidations, so when they come back only stale texels are recomputed.
+   */
+  setActiveLevels(n: number) {
+    this.active = Math.max(1, Math.min(this.levels.length, n));
+    for (let l = 0; l < this.levels.length; l++) {
+      (this.meshes[l].material as ShaderMaterial).uniforms.uLevels.value = this.active;
+      if (l >= this.active) this.meshes[l].visible = false;
+    }
+  }
+
+  /** Swap the ground texture array (graphics settings reload textures at another size). */
+  setAlbedo(t: Texture | DataArrayTexture) {
+    this.opt.albedo = t;
+    for (const m of this.meshes) (m.material as ShaderMaterial).uniforms.uAlbedo.value = t;
+  }
 
   /** Invalidate texels inside world rectangles (the road network changed there). */
   invalidate(rects: Rect[]) {
@@ -311,7 +335,8 @@ export class TerrainClipmap {
     const t0 = performance.now();
     const n = CLIP_N;
     let pending = 0;
-    for (const lv of this.levels) {
+    const act = this.levels.slice(0, this.active);
+    for (const lv of act) {
       const tx = Math.round(cx / lv.sp), tz = Math.round(cz / lv.sp);
       if (tx !== lv.target.x || tz !== lv.target.y) {
         // never jump more than 2 texels ahead of what is shown (the trailing rows that get
@@ -326,7 +351,7 @@ export class TerrainClipmap {
     // blocks that need work (scanned once per change of target or invalidation), nearest to
     // the camera first, finer levels first on ties
     const todo: { lv: Level; b: Blk; d: number }[] = [];
-    for (const lv of this.levels) {
+    for (const lv of act) {
       if (!lv.dirty) continue;
       if (!lv.list) lv.list = this.scan(lv);
       if (!lv.list.length) { this.settle(lv); continue; }
@@ -358,7 +383,7 @@ export class TerrainClipmap {
     }
     this.upload();
     for (let l = 0; l < this.levels.length; l++) {
-      this.meshes[l].visible = this.levels[l].ready;
+      this.meshes[l].visible = l < this.active && this.levels[l].ready;
       if (l > 0) (this.meshes[l].material as ShaderMaterial).uniforms.uFineOn.value = this.levels[l - 1].ready ? 1 : 0;
     }
     this.stats.blocks += done;
@@ -440,6 +465,7 @@ export class TerrainClipmap {
   heightAt(x: number, z: number): number | null {
     const n = CLIP_N;
     for (const lv of this.levels) {
+      if (lv.l >= this.active) break;
       if (!lv.ready && lv.l > 0) continue;
       const fx = x / lv.sp, fz = z / lv.sp;
       const gx = Math.floor(fx), gz = Math.floor(fz);

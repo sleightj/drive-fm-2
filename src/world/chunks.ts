@@ -281,6 +281,40 @@ export class ChunkManager {
     this.stats.dropped++;
   }
 
+  /** Queue extra jobs for chunks with no work pending (e.g. rebuilds after a settings change). */
+  requeue(jobsFor: (c: Chunk) => ChunkJob[]) {
+    const busy = new Set(this.jobs.map((j) => j.c));
+    for (const c of this.chunks.values()) if (!busy.has(c)) this.jobs.push(...jobsFor(c));
+  }
+
+  /**
+   * Switch to a new wear pool (graphics settings change the tile size and count). Tiles in
+   * progress are abandoned, every chunk falls back to the neutral layer with wear coordinates
+   * for the new tile size, and near chunks get fresh tiles over the next frames.
+   */
+  resetWear(wearTex: DataArrayTexture, opt: Pick<ChunkOptions, 'wearLayers' | 'wearW' | 'wearH' | 'wearPx'>) {
+    this.wearTasks.length = 0;
+    Object.assign(this.opt, opt);
+    this.wearTex = wearTex;
+    this.freeLayers.length = 0;
+    for (let i = opt.wearLayers - 1; i >= 1; i--) this.freeLayers.push(i);
+    for (const c of this.chunks.values()) {
+      c.wearLayer = 0;
+      const ref = this.tileRef(c, 0);
+      const g = c.road!.geometry;
+      const st = g.getAttribute('aST').array as Float32Array;
+      const a = g.getAttribute('aWear');
+      const w = a.array as Float32Array;
+      for (let i = 0, k = 0; i < w.length; i += 4, k += 2) {
+        w[i] = ((st[k] - ref.s0) * ref.pxS) / ref.W;
+        w[i + 1] = ((st[k + 1] - ref.tMin) * ref.pxT) / ref.H;
+        w[i + 2] = 0;
+        w[i + 3] = ref.pxT;
+      }
+      a.needsUpdate = true;
+    }
+  }
+
   /** Move the render origin (floating origin); every chunk group is re-placed. */
   rebase(ox: number, oz: number) {
     this.originX = ox;

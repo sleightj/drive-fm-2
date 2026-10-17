@@ -29,6 +29,8 @@ const tTitle = Date.now() - t0;
 await page.screenshot({ path: 'verify-live/title.png' });
 let driving = false;
 if (state === 'title') {
+  // the title ignores input for its first moments (a held key never skips it)
+  await page.waitForTimeout(1200);
   await page.keyboard.press('Enter');
   try {
     await page.waitForFunction(() => window.__DRIVE_FM__.state === 'driving', null, { timeout: 30000 });

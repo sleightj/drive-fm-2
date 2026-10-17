@@ -1,4 +1,4 @@
-import { Color, PerspectiveCamera, Scene, WebGLRenderer, Vector3 } from 'three';
+import { Color, PerspectiveCamera, Scene, ShaderMaterial, WebGLRenderer, Vector3 } from 'three';
 import { RoadGenerator } from './road/generator';
 import { RoadStream } from './road/stream';
 import { RoadSurface } from './road/surface';
@@ -110,11 +110,21 @@ export class Game {
   metrics = { frameMs: 0, simMs: 0, worldMs: 0, terrainMs: 0, renderMs: 0, maxFrameMs: 0, pendingChunks: 0, pendingTerrain: 0 };
   heroAsset!: VehicleAsset;
   onState: ((s: GameState) => void) | null = null;
+  /** Gamepad menu navigation while the title or pause menu is up (the front end handles it). */
+  onMenu: ((a: 'up' | 'down' | 'left' | 'right' | 'confirm' | 'back') => void) | null = null;
+  /** Called once per frame after the simulation (UI: boost meter). */
+  onFrame: (() => void) | null = null;
+  graphics: GraphicsLevel;
+  private mats!: { world: ShaderMaterial; decal: ShaderMaterial; road: ShaderMaterial };
+  private texScale = 1;
+  private gfxTok = 0;
   private moodW = [0, 0, 0, 0, 0, 0];
   private fogTint = new Color();
 
   constructor(public canvasParent: HTMLElement, public opt: GameOptions) {
-    this.level = LEVELS[opt.level];
+    // a live copy: systems keep this object and see graphics changes made from the pause menu
+    this.level = { ...LEVELS[opt.level] };
+    this.graphics = opt.level;
     this.renderer = new WebGLRenderer({ antialias: false, powerPreference: 'high-performance', stencil: false });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * this.level.scale);
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -152,14 +162,17 @@ export class Game {
     const wearTex = makeWearPool(L.wearLayers, L.wearW, L.wearH);
     const roadMat = makeRoadMaterial(wearTex, L.wearPx, L.detail);
     progress(0.2, 'car and textures');
+    this.texScale = L.texScale;
     const texP = loadWorldLayers('./assets/tex', L.texScale);
     this.traffic = new Traffic({ gen: this.gen, stream: this.stream, surface: this.surface, level: L, seed: this.opt.seed });
     const trafficP = this.traffic.load();
     this.heroAsset = await loadVehicle('./assets/cars/hero.glb', VEHICLE_SLOTS);
     this.tex = await texP;
     const tl = (m: string) => this.tex.L(GROUND_LAYERS[m as keyof typeof GROUND_LAYERS]);
+    // every level a graphics setting can ask for is allocated; the setting picks how many draw
     this.clip = new TerrainClipmap(this.terrain, {
-      levels: L.terrainLevels,
+      levels: Math.max(...Object.values(LEVELS).map((v) => v.terrainLevels)),
+      active: L.terrainLevels,
       moodLayers: MOODS.map((m) => tl(m)),
       moodTiles: MOODS.map((m) => GROUND_TILES[m]),
       slopeLayer: this.tex.L(SURFACES.earth.layer),
@@ -172,6 +185,7 @@ export class Game {
     decalMat.polygonOffset = true;
     decalMat.polygonOffsetFactor = -1;
     decalMat.polygonOffsetUnits = -4;
+    this.mats = { world: worldMat, decal: decalMat, road: roadMat };
     const propMat = makeActorMaterial({ style: PROP_STYLE, slots: PROP_SLOTS_LIST });
     const inkMat = makeInkMaterial(1);
     this.roadside = new Roadside({
@@ -218,6 +232,52 @@ export class Game {
     const mood = this.gen.districts.moodAt(pt.x, pt.z);
     const age = 0.5 + 0.5 * fbm1(hash32(this.opt.seed, 9, p.id), s / 260, 2);
     return asphaltTone(p.clsAt(s), mood, age);
+  }
+
+  /**
+   * Change the graphics level live (pause menu). Render scale, screen effects, view radius,
+   * land levels and wear tiles switch at once; world textures reload at the new size in the
+   * background and swap in when ready; chunks beyond the new detailed radius are rebuilt
+   * simply over the next frames.
+   */
+  async setGraphics(g: GraphicsLevel) {
+    if (g === this.graphics || !this.chunks) return;
+    const tok = ++this.gfxTok;
+    const prev = { ...this.level };
+    const L = LEVELS[g];
+    this.graphics = g;
+    Object.assign(this.level, L);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * L.scale);
+    this.post.setLevel(g);
+    this.resize();
+    this.chunks.opt.radius = L.radius;
+    this.roadside.d.nearR = L.nearR;
+    this.roadside.d.detail = L.detail;
+    if (L.nearR < prev.nearR) this.chunks.requeue((c) => this.roadside.downgradeJobs(c));
+    this.clip.setActiveLevels(L.terrainLevels);
+    const road = this.mats.road.uniforms;
+    road.uDetail.value = L.detail;
+    if (L.wearLayers !== prev.wearLayers || L.wearW !== prev.wearW || L.wearH !== prev.wearH || L.wearPx !== prev.wearPx) {
+      const old = this.chunks.wearTex;
+      const wt = makeWearPool(L.wearLayers, L.wearW, L.wearH);
+      this.chunks.resetWear(wt, { wearLayers: L.wearLayers, wearW: L.wearW, wearH: L.wearH, wearPx: L.wearPx });
+      road.uWearTex.value = wt;
+      road.uWearTexel.value = [1 / L.wearW, 1 / L.wearH];
+      road.uWearPxS.value = L.wearPx;
+      old.dispose();
+    }
+    if (L.texScale !== this.texScale) {
+      const tex = await loadWorldLayers('./assets/tex', L.texScale);
+      if (tok !== this.gfxTok) { tex.albedo.dispose(); tex.emit.dispose(); return; } // superseded
+      const old = this.tex;
+      this.tex = tex;
+      this.texScale = L.texScale;
+      this.roadside.d.tex = tex;
+      for (const m of [this.mats.world, this.mats.decal]) { m.uniforms.uAlbedo.value = tex.albedo; m.uniforms.uEmit.value = tex.emit; }
+      this.clip.setAlbedo(tex.albedo);
+      old.albedo.dispose();
+      old.emit.dispose();
+    }
   }
 
   setState(s: GameState) {
@@ -274,10 +334,18 @@ export class Game {
     const ctl = this.input.read(dt);
     this.frame++;
 
-    // ---- state machine
-    if (this.state === 'title' && (ctl.any || this.opt.autopilot)) this.setState('driving');
-    else if (this.state === 'driving' && ctl.pause) this.setState('paused');
-    else if (this.state === 'paused' && ctl.pause) this.setState('driving');
+    // ---- state machine. Keyboard, mouse and touch reach the front end directly while a menu
+    // is up; the gamepad is forwarded here (Start confirms on the title, backs out of pause).
+    const pad = ctl.source === 'gamepad';
+    if (this.state === 'title') {
+      if (this.opt.autopilot) this.setState('driving');
+      else if (this.onMenu) { if (pad && (ctl.pause || ctl.menu)) this.onMenu(ctl.pause ? 'confirm' : ctl.menu!); }
+      else if (ctl.any) this.setState('driving');
+    } else if (this.state === 'driving' && ctl.pause) this.setState('paused');
+    else if (this.state === 'paused') {
+      if (this.onMenu) { if (pad && (ctl.pause || ctl.menu)) this.onMenu(ctl.pause ? 'back' : ctl.menu!); }
+      else if (ctl.pause) this.setState('driving');
+    }
 
     // ---- simulation (fixed step): the car while driving; traffic also behind the title
     const s0 = performance.now();
@@ -339,6 +407,7 @@ export class Game {
     const r0 = performance.now();
     this.post.render(this.scene, this.camera, { dt, kmh: this.car.kmh, boost: this.car.boosting ? 1 : 0, night: st.night });
     this.metrics.renderMs = performance.now() - r0;
+    this.onFrame?.();
     this.metrics.frameMs = performance.now() - f0;
     if (this.frame > 30) this.metrics.maxFrameMs = Math.max(this.metrics.maxFrameMs, this.metrics.frameMs);
     if (this.rec) {

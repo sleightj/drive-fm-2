@@ -201,6 +201,18 @@ export class Roadside {
   }
 
   /**
+   * Jobs to rebuild a detailed chunk simply when it lies beyond the detailed radius (the
+   * graphics level was lowered from the pause menu, so the radius shrank).
+   */
+  downgradeJobs(c: Chunk): Job[] {
+    const st = this.state.get(c.key);
+    if (!st || !st.done || st.lod === 1 || c.dist < this.d.nearR + 40) return [];
+    st.lod = 1;
+    st.done = false;
+    return this.buildJobs(c, st, 1);
+  }
+
+  /**
    * Sidewalks of a chunk whose roadside is built, for pedestrians: per side, points along the
    * kerb (world x/z, walking surface height y, outward normal) with the usable walk measured
    * outward from the kerb line, plus the props standing on them (world x/z, radius). Empty

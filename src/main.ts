@@ -1,5 +1,6 @@
 import { Game, GraphicsLevel } from './game';
 import { TIME_NAMES } from './render/environment';
+import { FrontEnd } from './ui/frontend';
 import type { Mood } from './world/moods';
 
 /**
@@ -8,21 +9,19 @@ import type { Mood } from './world/moods';
  */
 const q = new URLSearchParams(location.search);
 const num = (k: string, d: number) => (q.has(k) ? Number(q.get(k)) : d);
-let level: GraphicsLevel = 'high';
-try {
-  const saved = localStorage.getItem('drivefm.graphics');
-  if (saved === 'high' || saved === 'low' || saved === 'verylow') level = saved;
-} catch { /* storage unavailable */ }
-if (q.has('gfx')) level = q.get('gfx') as GraphicsLevel;
+
+const app = document.getElementById('app')!;
+// the front end (boot card, title, pause menu, boost meter, touch) remembers the graphics level
+const fe = new FrontEnd(app, {
+  start: () => game.setState('driving'),
+  resume: () => game.setState('driving'),
+  graphics: (l) => { void game.setGraphics(l); },
+});
+const gfxQ = q.get('gfx');
+const level: GraphicsLevel = gfxQ === 'high' || gfxQ === 'low' || gfxQ === 'verylow' ? gfxQ : fe.graphics;
 const timeQ = q.get('time');
 const hour = timeQ ? (TIME_NAMES[timeQ] ?? Number(timeQ)) : 15.2;
 const seed = num('seed', Math.floor(Math.random() * 1e6));
-
-const app = document.getElementById('app')!;
-const boot = document.createElement('div');
-boot.id = 'boot';
-boot.textContent = 'DRIVE FM';
-app.appendChild(boot);
 
 const game = new Game(app, {
   seed,
@@ -35,6 +34,21 @@ const game = new Game(app, {
   startMood: (q.get('mood') as Mood | null) ?? null,
 });
 
+// front end hooks: menus follow the game state, the gamepad drives the menus, the meter follows boost
+game.onState = (st) => {
+  if (st === 'title') fe.showTitle(); else fe.hideTitle();
+  if (st === 'paused') fe.showPause(); else fe.hidePause();
+};
+game.onMenu = (a) => fe.menu(a);
+game.onFrame = () => {
+  const g = game;
+  fe.setBoost(g.car.boost, g.car.boosting);
+  if (g.input.source === 'gamepad') fe.setTouchVisible(false);
+};
+game.input.touch = fe.touch;
+game.input.onTouchSeen = () => fe.setTouchVisible(true);
+fe.onTouchPause = () => { if (game.state === 'driving') game.setState('paused'); };
+
 const api = {
   get state() { return game.state; },
   game,
@@ -44,7 +58,7 @@ const api = {
     return {
       state: game.state,
       seed,
-      level,
+      level: game.graphics,
       fps: 1000 / Math.max(1, game.metrics.frameMs),
       metrics: { ...game.metrics },
       calls: r.render.calls,
@@ -61,6 +75,9 @@ const api = {
   },
   setHour(h: number | string) { game.setHour(h); },
   start() { if (game.state === 'title') game.setState('driving'); },
+  pause() { if (game.state === 'driving') game.setState('paused'); },
+  resume() { if (game.state === 'paused') game.setState('driving'); },
+  setGraphics(l: GraphicsLevel) { return game.setGraphics(l); },
   /** Start recording per-frame samples, or take (and clear) what was recorded. */
   record(on: boolean) { game.rec = on ? [] : null; },
   takeFrames() { const r = game.rec ?? []; if (game.rec) game.rec = []; return r; },
@@ -68,11 +85,12 @@ const api = {
 };
 (window as any).__DRIVE_FM__ = api;
 
-game.load((p, label) => { boot.textContent = `DRIVE FM  ${Math.round(p * 100)}%  ${label}`; }).then(() => {
-  boot.remove();
+game.load((p, label) => fe.boot(p, label)).then(() => {
+  fe.boot(1, 'ready');
+  fe.bootDone();
   game.start();
 }).catch((e) => {
-  boot.textContent = 'DRIVE FM could not start: ' + (e?.message ?? e);
+  fe.boot(0, 'could not start: ' + (e?.message ?? e));
   (window as any).__DRIVE_FM_ERROR__ = String(e?.stack ?? e);
   console.error(e);
 });
