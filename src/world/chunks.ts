@@ -35,11 +35,17 @@ export interface Chunk {
   parts: ChunkPart[];
   /** distance to the camera when last ranked */
   dist: number;
+  alive: boolean;
 }
 
+/** A small piece of world-building work tied to a chunk (run in order, inside the frame budget). */
+export interface ChunkJob { c: Chunk; run(): void; label: string }
+
 export interface ChunkHooks {
-  /** build everything beside the road (edges, lamps, buildings); may add parts */
-  roadside?(c: Chunk): void;
+  /** the jobs that build everything beside a freshly built road chunk */
+  roadside?(c: Chunk): ChunkJob[];
+  /** jobs to rebuild a chunk in more detail now that it is near (empty when not needed) */
+  upgrade?(c: Chunk): ChunkJob[];
   /** a chunk was removed */
   removed?(c: Chunk): void;
 }
@@ -63,7 +69,8 @@ export class ChunkManager {
   private tileBuf: Uint8Array;
   originX = 0;
   originZ = 0;
-  stats = { built: 0, dropped: 0, buildMs: 0, maxBuildMs: 0, wearMs: 0 };
+  stats = { built: 0, dropped: 0, buildMs: 0, maxBuildMs: 0, wearMs: 0, jobs: 0, maxJobMs: 0, maxJob: '', pendingJobs: 0 };
+  private jobs: ChunkJob[] = [];
 
   constructor(
     public gen: RoadGenerator,
@@ -113,21 +120,41 @@ export class ChunkManager {
     for (const c of this.chunks.values()) if (c.wearLayer > 0 && c.dist > this.opt.wearRadius + 60) this.releaseWear(c);
     const todo = [...want.entries()].filter(([k]) => !this.chunks.has(k)).sort((a, b) => a[1].d - b[1].d);
     const nearNoWear = [...this.chunks.values()].filter((c) => c.wearLayer === 0 && c.dist < this.opt.wearRadius).sort((a, b) => a.dist - b.dist);
-    let pending = todo.length;
     for (const c of nearNoWear) {
       if (now() - t0 > budgetMs) break;
       this.assignWear(c);
     }
-    for (const [key, w] of todo) {
-      if (now() - t0 > budgetMs) break;
-      const tb = now();
-      this.build(key, w.p, w.ci, w.d);
-      const dt = now() - tb;
-      this.stats.maxBuildMs = Math.max(this.stats.maxBuildMs, dt);
-      pending--;
+    // chunks that came near and want more detail
+    if (this.hooks.upgrade) {
+      const busy = new Set(this.jobs.map((j) => j.c));
+      for (const c of this.chunks.values()) if (!busy.has(c)) this.jobs.push(...this.hooks.upgrade(c));
     }
+    // one queue: road builds and roadside jobs, nearest chunk first (jobs of a chunk keep order)
+    this.jobs = this.jobs.filter((j) => j.c.alive);
+    this.jobs.sort((a, b) => a.c.dist - b.c.dist);
+    let ti = 0, ji = 0;
+    while (now() - t0 <= budgetMs) {
+      const nb = ti < todo.length ? todo[ti][1].d : Infinity;
+      const nj = ji < this.jobs.length ? this.jobs[ji].c.dist + 1 : Infinity;
+      if (nb === Infinity && nj === Infinity) break;
+      const tb = now();
+      if (nb <= nj) {
+        const [key, w] = todo[ti++];
+        this.build(key, w.p, w.ci, w.d);
+        this.stats.maxBuildMs = Math.max(this.stats.maxBuildMs, now() - tb);
+      } else {
+        const j = this.jobs[ji++];
+        if (!j.c.alive) continue;
+        j.run();
+        const dt = now() - tb;
+        this.stats.jobs++;
+        if (dt > this.stats.maxJobMs) { this.stats.maxJobMs = dt; this.stats.maxJob = j.label; }
+      }
+    }
+    this.jobs.splice(0, ji);
+    this.stats.pendingJobs = this.jobs.length;
     this.stats.buildMs = now() - t0;
-    return pending;
+    return todo.length - ti + this.jobs.length;
   }
 
   private build(key: string, p: Path, ci: number, d: number) {
@@ -137,7 +164,7 @@ export class ChunkManager {
     const ox = Math.round(_pt.x), oz = Math.round(_pt.z);
     const group = new Group();
     group.name = key;
-    const c: Chunk = { key, path: p, ci, s0, s1, ox, oz, group, road: null, wearLayer: 0, tMin: 0, tMax: 0, parts: [], dist: d };
+    const c: Chunk = { key, path: p, ci, s0, s1, ox, oz, group, road: null, wearLayer: 0, tMin: 0, tMax: 0, parts: [], dist: d, alive: true };
     // lateral extent first (the wear tile must cover it)
     this.extent(c);
     const tile = this.tileRef(c, 0);
@@ -152,7 +179,7 @@ export class ChunkManager {
     this.root.add(group);
     this.chunks.set(key, c);
     if (d < this.opt.wearRadius) this.assignWear(c);
-    this.hooks.roadside?.(c);
+    if (this.hooks.roadside) this.jobs.push(...this.hooks.roadside(c));
     this.stats.built++;
   }
 
@@ -200,6 +227,7 @@ export class ChunkManager {
   }
 
   private drop(c: Chunk) {
+    c.alive = false;
     if (c.wearLayer > 0) this.freeLayers.push(c.wearLayer);
     c.road?.geometry.dispose();
     for (const part of c.parts) part.dispose();

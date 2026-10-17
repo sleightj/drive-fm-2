@@ -1,0 +1,779 @@
+{
+ "atlas": "detail.png",
+ "fps": 30,
+ "clips": {
+  "walk": {
+   "seconds": 1.1,
+   "speed": 1.3,
+   "stride": 1.43
+  },
+  "walk_fast": {
+   "seconds": 0.8,
+   "speed": 2.0,
+   "stride": 1.6
+  },
+  "skate": {
+   "seconds": 1.6,
+   "speed": 3.5
+  },
+  "idle": {
+   "seconds": 4.0,
+   "speed": 0.0
+  }
+ },
+ "slots": [
+  "skin",
+  "hair",
+  "top",
+  "top2",
+  "bottom",
+  "shoes",
+  "accent",
+  "gear",
+  "detail"
+ ],
+ "variants": [
+  {
+   "name": "bomber",
+   "file": "person_bomber.glb",
+   "skates": false,
+   "triangles": 2754,
+   "height": 1.862,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#e8b48e",
+     "hair": "#2a2030",
+     "top": "#56703c",
+     "top2": "#ff7a2a",
+     "bottom": "#2a2a35",
+     "shoes": "#f4f4f0",
+     "accent": "#ff5a3c",
+     "gear": "#1d1d26"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#3a2a20",
+     "top": "#2a2a35",
+     "top2": "#ffd21e",
+     "bottom": "#56703c",
+     "shoes": "#f4f4f0",
+     "accent": "#ffd21e",
+     "gear": "#1d1d26"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4d2b4",
+     "hair": "#c8a070",
+     "top": "#c8283a",
+     "top2": "#f2f0ea",
+     "bottom": "#24242e",
+     "shoes": "#f4f4f0",
+     "accent": "#31e0c8",
+     "gear": "#1d1d26"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#16141a",
+     "top": "#3d7bd8",
+     "top2": "#ff7a2a",
+     "bottom": "#c8b89a",
+     "shoes": "#f4f4f0",
+     "accent": "#ff7a2a",
+     "gear": "#1d1d26"
+    }
+   ]
+  },
+  {
+   "name": "hoodie",
+   "file": "person_hoodie.glb",
+   "skates": true,
+   "triangles": 2988,
+   "height": 1.833,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#3a2a20",
+     "top": "#3d7bd8",
+     "top2": "#f2f0e8",
+     "bottom": "#24242e",
+     "shoes": "#f0eee8",
+     "accent": "#ffd23a",
+     "gear": "#26262f"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#16141a",
+     "top": "#ff5a3c",
+     "top2": "#f2f0e8",
+     "bottom": "#2a3a6a",
+     "shoes": "#f0eee8",
+     "accent": "#31e0c8",
+     "gear": "#26262f"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#1a1210",
+     "top": "#ffd21e",
+     "top2": "#f2f0e8",
+     "bottom": "#24242e",
+     "shoes": "#f0eee8",
+     "accent": "#7a2ad8",
+     "gear": "#26262f"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8b48e",
+     "hair": "#7a5ad8",
+     "top": "#f2f0ea",
+     "top2": "#ff3d7a",
+     "bottom": "#56703c",
+     "shoes": "#f0eee8",
+     "accent": "#ff3d7a",
+     "gear": "#26262f"
+    }
+   ]
+  },
+  {
+   "name": "longcoat",
+   "file": "person_longcoat.glb",
+   "skates": false,
+   "triangles": 2692,
+   "height": 1.844,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#1a1820",
+     "top": "#c8a878",
+     "top2": "#2a2a3a",
+     "bottom": "#3a3a48",
+     "shoes": "#2a1e1a",
+     "accent": "#6a4a30",
+     "gear": "#1d1d26"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8b48e",
+     "hair": "#1a1820",
+     "top": "#2a2a35",
+     "top2": "#c8283a",
+     "bottom": "#c8b89a",
+     "shoes": "#2a1e1a",
+     "accent": "#c8a878",
+     "gear": "#1d1d26"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#a8704e",
+     "hair": "#2a1810",
+     "top": "#56703c",
+     "top2": "#f2f0ea",
+     "bottom": "#24242e",
+     "shoes": "#2a1e1a",
+     "accent": "#2a1e1a",
+     "gear": "#1d1d26"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4d2b4",
+     "hair": "#c8a070",
+     "top": "#8a2a3a",
+     "top2": "#1a1820",
+     "bottom": "#2a2a35",
+     "shoes": "#2a1e1a",
+     "accent": "#1a1820",
+     "gear": "#1d1d26"
+    }
+   ]
+  },
+  {
+   "name": "schoolgirl",
+   "file": "person_schoolgirl.glb",
+   "skates": false,
+   "triangles": 2354,
+   "height": 1.572,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#f2d0b4",
+     "hair": "#2a1a14",
+     "top": "#f4f2ec",
+     "top2": "#26305a",
+     "bottom": "#26305a",
+     "shoes": "#3a2418",
+     "accent": "#e8344a",
+     "gear": "#4a3020"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8c0a0",
+     "hair": "#16141a",
+     "top": "#f4f2ec",
+     "top2": "#1f5a3a",
+     "bottom": "#1f5a3a",
+     "shoes": "#3a2418",
+     "accent": "#ffd21e",
+     "gear": "#4a3020"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4d2b4",
+     "hair": "#8a4a2a",
+     "top": "#f4f2ec",
+     "top2": "#5a2a3a",
+     "bottom": "#5a2a3a",
+     "shoes": "#3a2418",
+     "accent": "#31e0c8",
+     "gear": "#4a3020"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#3a2a20",
+     "top": "#f2e6c8",
+     "top2": "#24242e",
+     "bottom": "#24242e",
+     "shoes": "#3a2418",
+     "accent": "#ff3d7a",
+     "gear": "#4a3020"
+    }
+   ]
+  },
+  {
+   "name": "salaryman",
+   "file": "person_salaryman.glb",
+   "skates": false,
+   "triangles": 2436,
+   "height": 1.72,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#e0b090",
+     "hair": "#16141a",
+     "top": "#3a4256",
+     "top2": "#eef0f4",
+     "bottom": "#3a4256",
+     "shoes": "#241a16",
+     "accent": "#c8283a",
+     "gear": "#2a1e18"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#2a2420",
+     "top": "#2a2a30",
+     "top2": "#eef0f4",
+     "bottom": "#2a2a30",
+     "shoes": "#241a16",
+     "accent": "#3d7bd8",
+     "gear": "#2a1e18"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#a8704e",
+     "hair": "#16141a",
+     "top": "#6a6a72",
+     "top2": "#dfe8f4",
+     "bottom": "#6a6a72",
+     "shoes": "#241a16",
+     "accent": "#ffd21e",
+     "gear": "#2a1e18"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8b48e",
+     "hair": "#9a9aa0",
+     "top": "#3a3226",
+     "top2": "#eef0f4",
+     "bottom": "#3a3226",
+     "shoes": "#241a16",
+     "accent": "#2a8a5a",
+     "gear": "#2a1e18"
+    }
+   ]
+  },
+  {
+   "name": "roller",
+   "file": "person_roller.glb",
+   "skates": true,
+   "triangles": 2896,
+   "height": 1.766,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c09a",
+     "hair": "#ff5f9e",
+     "top": "#f6f4ee",
+     "top2": "#2b3a8f",
+     "bottom": "#ffb51e",
+     "shoes": "#f6f4ee",
+     "accent": "#38d6c4",
+     "gear": "#2a2a35"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#ffd21e",
+     "top": "#f6f4ee",
+     "top2": "#ff5a3c",
+     "bottom": "#31e0c8",
+     "shoes": "#f6f4ee",
+     "accent": "#ff5a3c",
+     "gear": "#2a2a35"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#16141a",
+     "top": "#f6f4ee",
+     "top2": "#24242e",
+     "bottom": "#7a2ad8",
+     "shoes": "#f6f4ee",
+     "accent": "#ffd21e",
+     "gear": "#2a2a35"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4d2b4",
+     "hair": "#2bd0e0",
+     "top": "#24242e",
+     "top2": "#ff3d7a",
+     "bottom": "#ff3d7a",
+     "shoes": "#f6f4ee",
+     "accent": "#f2f0ea",
+     "gear": "#2a2a35"
+    }
+   ]
+  },
+  {
+   "name": "puffer",
+   "file": "person_puffer.glb",
+   "skates": false,
+   "triangles": 2506,
+   "height": 1.792,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#e2b088",
+     "hair": "#141418",
+     "top": "#ff8a1e",
+     "top2": "#1d1d26",
+     "bottom": "#22222c",
+     "shoes": "#3a3a44",
+     "accent": "#2fc4c0",
+     "gear": "#f2f0ea"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#141418",
+     "top": "#2a2a35",
+     "top2": "#1d1d26",
+     "bottom": "#56703c",
+     "shoes": "#3a3a44",
+     "accent": "#ff5a3c",
+     "gear": "#f2f0ea"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#141418",
+     "top": "#c8283a",
+     "top2": "#1d1d26",
+     "bottom": "#24242e",
+     "shoes": "#3a3a44",
+     "accent": "#f2f0ea",
+     "gear": "#24242e"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8b48e",
+     "hair": "#5a3a28",
+     "top": "#9ad04a",
+     "top2": "#1d1d26",
+     "bottom": "#2a2a35",
+     "shoes": "#3a3a44",
+     "accent": "#7a2ad8",
+     "gear": "#f2f0ea"
+    }
+   ]
+  },
+  {
+   "name": "tracksuit",
+   "file": "person_tracksuit.glb",
+   "skates": false,
+   "triangles": 2802,
+   "height": 1.747,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#b97a56",
+     "hair": "#1a1410",
+     "top": "#1f8a5a",
+     "top2": "#f2f0ea",
+     "bottom": "#1f8a5a",
+     "shoes": "#f2f0ea",
+     "accent": "#f2f0ea",
+     "gear": "#24242c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#1a1410",
+     "top": "#2a3a8a",
+     "top2": "#f2f0ea",
+     "bottom": "#2a3a8a",
+     "shoes": "#f2f0ea",
+     "accent": "#ff5a3c",
+     "gear": "#24242c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#1a1410",
+     "top": "#c8283a",
+     "top2": "#f2f0ea",
+     "bottom": "#c8283a",
+     "shoes": "#f2f0ea",
+     "accent": "#f2f0ea",
+     "gear": "#f2f0ea"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#16141a",
+     "top": "#24242e",
+     "top2": "#f2f0ea",
+     "bottom": "#24242e",
+     "shoes": "#f2f0ea",
+     "accent": "#ffd21e",
+     "gear": "#24242c"
+    }
+   ]
+  },
+  {
+   "name": "dress",
+   "file": "person_dress.glb",
+   "skates": false,
+   "triangles": 2484,
+   "height": 1.654,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#f4cfae",
+     "hair": "#5a2e22",
+     "top": "#e8e0c8",
+     "top2": "#d8423a",
+     "bottom": "#e8e0c8",
+     "shoes": "#d8423a",
+     "accent": "#2a6a9a",
+     "gear": "#c89a5a"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4cfae",
+     "hair": "#16141a",
+     "top": "#9ad0f0",
+     "top2": "#2a3a8a",
+     "bottom": "#9ad0f0",
+     "shoes": "#2a3a8a",
+     "accent": "#ff8a1e",
+     "gear": "#c89a5a"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#a8704e",
+     "hair": "#2a1810",
+     "top": "#ffd21e",
+     "top2": "#f2f0ea",
+     "bottom": "#ffd21e",
+     "shoes": "#f2f0ea",
+     "accent": "#c8283a",
+     "gear": "#c89a5a"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4cfae",
+     "hair": "#c8a070",
+     "top": "#ff8ab8",
+     "top2": "#24242e",
+     "bottom": "#ff8ab8",
+     "shoes": "#24242e",
+     "accent": "#31e0c8",
+     "gear": "#c89a5a"
+    }
+   ]
+  },
+  {
+   "name": "courier",
+   "file": "person_courier.glb",
+   "skates": false,
+   "triangles": 2642,
+   "height": 1.732,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#d9a079",
+     "hair": "#201a16",
+     "top": "#2a5bd8",
+     "top2": "#f2f0ea",
+     "bottom": "#40404a",
+     "shoes": "#f2f0ea",
+     "accent": "#ffcc1e",
+     "gear": "#e8442e"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#201a16",
+     "top": "#1f8a5a",
+     "top2": "#f2f0ea",
+     "bottom": "#40404a",
+     "shoes": "#f2f0ea",
+     "accent": "#24242e",
+     "gear": "#ffd21e"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#201a16",
+     "top": "#ff5a3c",
+     "top2": "#f2f0ea",
+     "bottom": "#2a3a6a",
+     "shoes": "#f2f0ea",
+     "accent": "#31e0c8",
+     "gear": "#24242e"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#3a2a20",
+     "top": "#ffd21e",
+     "top2": "#f2f0ea",
+     "bottom": "#40404a",
+     "shoes": "#f2f0ea",
+     "accent": "#ff5a3c",
+     "gear": "#2a3a8a"
+    }
+   ]
+  },
+  {
+   "name": "elder",
+   "file": "person_elder.glb",
+   "skates": false,
+   "triangles": 2576,
+   "height": 1.667,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#e6b896",
+     "hair": "#d8d8dc",
+     "top": "#8a5a3a",
+     "top2": "#e8e2d0",
+     "bottom": "#5a5a50",
+     "shoes": "#3a2a20",
+     "accent": "#3a5a8a",
+     "gear": "#4a4440"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#d8d8dc",
+     "top": "#3a5a3a",
+     "top2": "#e8e2d0",
+     "bottom": "#4a4440",
+     "shoes": "#3a2a20",
+     "accent": "#3a5a8a",
+     "gear": "#8a6a4a"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f0c8a8",
+     "hair": "#f2f0ea",
+     "top": "#7a2a2a",
+     "top2": "#e8e2d0",
+     "bottom": "#5a5a62",
+     "shoes": "#3a2a20",
+     "accent": "#3a5a8a",
+     "gear": "#2a2a30"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#d8d8dc",
+     "top": "#c8b48a",
+     "top2": "#9ad0f0",
+     "bottom": "#3a3a44",
+     "shoes": "#3a2a20",
+     "accent": "#3a5a8a",
+     "gear": "#5a4030"
+    }
+   ]
+  },
+  {
+   "name": "twintails",
+   "file": "person_twintails.glb",
+   "skates": false,
+   "triangles": 2482,
+   "height": 1.627,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#f6d6bc",
+     "hair": "#2bd0e0",
+     "top": "#f7b6d2",
+     "top2": "#2a2438",
+     "bottom": "#2a2438",
+     "shoes": "#f2f0f4",
+     "accent": "#ff3d7a",
+     "gear": "#2a2438"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8c0a0",
+     "hair": "#ff5f9e",
+     "top": "#f2f0ea",
+     "top2": "#2a2438",
+     "bottom": "#2a2438",
+     "shoes": "#24242e",
+     "accent": "#31e0c8",
+     "gear": "#2a2438"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#ffd21e",
+     "top": "#9ad0f0",
+     "top2": "#f2f0ea",
+     "bottom": "#2a2438",
+     "shoes": "#f2f0f4",
+     "accent": "#7a2ad8",
+     "gear": "#2a2438"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f6d6bc",
+     "hair": "#7a5ad8",
+     "top": "#24242e",
+     "top2": "#24242e",
+     "bottom": "#c8283a",
+     "shoes": "#f2f0f4",
+     "accent": "#ffd21e",
+     "gear": "#2a2438"
+    }
+   ]
+  },
+  {
+   "name": "punk",
+   "file": "person_punk.glb",
+   "skates": false,
+   "triangles": 2432,
+   "height": 1.931,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#e8bc9c",
+     "hair": "#ff2f6e",
+     "top": "#16161c",
+     "top2": "#f2f0ea",
+     "bottom": "#3a64a8",
+     "shoes": "#16161c",
+     "accent": "#c8c8d2",
+     "gear": "#16161c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#31e0c8",
+     "top": "#16161c",
+     "top2": "#ffd21e",
+     "bottom": "#24242e",
+     "shoes": "#16161c",
+     "accent": "#c8c8d2",
+     "gear": "#16161c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#f4d2b4",
+     "hair": "#ffd21e",
+     "top": "#7a2a2a",
+     "top2": "#f2f0ea",
+     "bottom": "#2a3a6a",
+     "shoes": "#16161c",
+     "accent": "#c8c8d2",
+     "gear": "#16161c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#9ad04a",
+     "top": "#24242e",
+     "top2": "#f2f0ea",
+     "bottom": "#c8283a",
+     "shoes": "#16161c",
+     "accent": "#ffd21e",
+     "gear": "#16161c"
+    }
+   ]
+  },
+  {
+   "name": "jersey",
+   "file": "person_jersey.glb",
+   "skates": true,
+   "triangles": 2706,
+   "height": 1.925,
+   "palettes": [
+    {
+     "detail": "#ffffff",
+     "skin": "#8a5a3e",
+     "hair": "#1a1210",
+     "top": "#ffd21e",
+     "top2": "#7a2ad8",
+     "bottom": "#7a2ad8",
+     "shoes": "#16161c",
+     "accent": "#ffd21e",
+     "gear": "#16161c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#c98e68",
+     "hair": "#1a1210",
+     "top": "#c8283a",
+     "top2": "#f2f0ea",
+     "bottom": "#f2f0ea",
+     "shoes": "#16161c",
+     "accent": "#c8283a",
+     "gear": "#16161c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#6e4630",
+     "hair": "#1a1210",
+     "top": "#1f8a5a",
+     "top2": "#ffd21e",
+     "bottom": "#ffd21e",
+     "shoes": "#16161c",
+     "accent": "#1f8a5a",
+     "gear": "#16161c"
+    },
+    {
+     "detail": "#ffffff",
+     "skin": "#e8b48e",
+     "hair": "#3a2a20",
+     "top": "#2a3a8a",
+     "top2": "#ff8a1e",
+     "bottom": "#ff8a1e",
+     "shoes": "#16161c",
+     "accent": "#f2f0ea",
+     "gear": "#16161c"
+    }
+   ]
+  }
+ ]
+}

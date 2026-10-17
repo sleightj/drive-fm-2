@@ -9,6 +9,11 @@ import { TerrainField } from './world/terrain';
 import { TerrainClipmap } from './world/terrainClipmap';
 import { loadWorldLayers, WorldLayers } from './render/worldTextures';
 import { GROUND_LAYERS, GROUND_TILES, SURFACES } from './world/kit/street';
+import { Roadside } from './world/roadside';
+import { Footprints } from './world/footprints';
+import { makeWorldMaterial } from './render/worldMaterial';
+import { makeActorMaterial, makeInkMaterial } from './render/actorMaterial';
+import { PROP_STYLE, PROP_SLOTS_LIST } from './world/kit/propStyle';
 import { makeRoadMaterial, makeWearPool } from './render/roadMaterial';
 import { makeSky } from './render/sky';
 import { env, applyTimeOfDay, TIME_NAMES } from './render/environment';
@@ -39,13 +44,14 @@ export interface LevelSpec {
   detail: number;
   terrainLevels: number;
   terrainMs: number; // terrain slice
+  nearR: number; // detailed roadside within this distance
   texScale: number; // world texture size
 }
 
 export const LEVELS: Record<GraphicsLevel, LevelSpec> = {
-  high: { scale: 1, radius: 1100, wearLayers: 40, wearPx: 8, wearW: 512, wearH: 256, budgetMs: 4, detail: 1, terrainLevels: 5, terrainMs: 1.5, texScale: 1 },
-  low: { scale: 0.85, radius: 800, wearLayers: 32, wearPx: 5, wearW: 256, wearH: 128, budgetMs: 3, detail: 0.6, terrainLevels: 4, terrainMs: 1, texScale: 0.5 },
-  verylow: { scale: 0.6, radius: 500, wearLayers: 24, wearPx: 4, wearW: 256, wearH: 128, budgetMs: 2, detail: 0.3, terrainLevels: 4, terrainMs: 0.8, texScale: 0.5 },
+  high: { scale: 1, radius: 1100, wearLayers: 40, wearPx: 8, wearW: 512, wearH: 256, budgetMs: 4, detail: 1, terrainLevels: 5, terrainMs: 1.5, texScale: 1, nearR: 450 },
+  low: { scale: 0.85, radius: 800, wearLayers: 32, wearPx: 5, wearW: 256, wearH: 128, budgetMs: 3, detail: 0.6, terrainLevels: 4, terrainMs: 1, texScale: 0.5, nearR: 320 },
+  verylow: { scale: 0.6, radius: 500, wearLayers: 24, wearPx: 4, wearW: 256, wearH: 128, budgetMs: 2, detail: 0.3, terrainLevels: 4, terrainMs: 0.8, texScale: 0.5, nearR: 220 },
 };
 
 const DT = 1 / 120;
@@ -74,6 +80,8 @@ export class Game {
   terrain: TerrainField;
   clip!: TerrainClipmap;
   tex!: WorldLayers;
+  roadside!: Roadside;
+  foot = new Footprints();
   car: Car;
   visual!: CarVisual;
   chase: ChaseCamera;
@@ -131,10 +139,6 @@ export class Game {
     const L = this.level;
     const wearTex = makeWearPool(L.wearLayers, L.wearW, L.wearH);
     const roadMat = makeRoadMaterial(wearTex, L.wearPx, L.detail);
-    this.chunks = new ChunkManager(this.gen, this.surface, wearTex, roadMat, {
-      radius: L.radius, wearRadius: 260, wearLayers: L.wearLayers, wearW: L.wearW, wearH: L.wearH, wearPx: L.wearPx,
-    }, {}, (p, s) => this.tone(p, s));
-    this.scene.add(this.chunks.root);
     progress(0.2, 'car and textures');
     const texP = loadWorldLayers('./assets/tex', L.texScale);
     this.heroAsset = await loadVehicle('./assets/cars/hero.glb', VEHICLE_SLOTS);
@@ -149,6 +153,26 @@ export class Game {
       albedo: this.tex.albedo,
     });
     this.scene.add(this.clip.root);
+    const worldMat = makeWorldMaterial({ albedo: this.tex.albedo, emit: this.tex.emit, cutout: true });
+    const decalMat = makeWorldMaterial({ albedo: this.tex.albedo, emit: this.tex.emit, cutout: true });
+    decalMat.polygonOffset = true;
+    decalMat.polygonOffsetFactor = -1;
+    decalMat.polygonOffsetUnits = -4;
+    const propMat = makeActorMaterial({ style: PROP_STYLE, slots: PROP_SLOTS_LIST });
+    const inkMat = makeInkMaterial(1);
+    this.roadside = new Roadside({
+      gen: this.gen, surface: this.surface, terrain: this.terrain, clip: this.clip, tex: this.tex,
+      mats: { world: worldMat, decal: decalMat, prop: propMat, ink: inkMat }, foot: this.foot,
+      seed: this.opt.seed, nearR: L.nearR, detail: L.detail,
+    });
+    this.chunks = new ChunkManager(this.gen, this.surface, wearTex, roadMat, {
+      radius: L.radius, wearRadius: 260, wearLayers: L.wearLayers, wearW: L.wearW, wearH: L.wearH, wearPx: L.wearPx,
+    }, {
+      roadside: (c) => this.roadside.jobsFor(c),
+      upgrade: (c) => this.roadside.upgradeJobs(c),
+      removed: (c) => this.roadside.removed(c),
+    }, (p, s) => this.tone(p, s));
+    this.scene.add(this.chunks.root);
     this.visual = new CarVisual(this.heroAsset);
     this.scene.add(this.visual.root, this.visual.shadow);
     // park on the start straight
@@ -157,11 +181,12 @@ export class Game {
     this.rebase(this.car.x, this.car.z);
     progress(0.4, 'city');
     // build the nearest chunks before the first frame
-    let guard = 0;
-    while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 3) { /* all */ }
-    progress(0.7, 'land');
+    progress(0.5, 'land');
     this.syncTerrain();
     this.clip.update(this.car.x, this.car.z, 1e9, true);
+    progress(0.7, 'city');
+    let guard = 0;
+    while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 3) { /* all */ }
     progress(0.95, 'ready');
     this.resize();
     this.applyEnv(0);
@@ -269,12 +294,12 @@ export class Game {
     env.uHeadPos.value.set(this.car.x - this.originX + hd.x * 2.2, this.car.y + 0.2, this.car.z - this.originZ + hd.z * 2.2);
     env.uHeadOn.value = clamp(st.lamps, 0, 1);
 
-    // ---- world streaming (time-sliced)
+    // ---- world streaming (time-sliced): land first, so the roadside stands on current ground
+    this.syncTerrain();
     const w0 = performance.now();
     this.metrics.pendingChunks = this.chunks.update(this.car.x, this.car.z, this.level.budgetMs * Math.max(1, this.opt.simRate));
     this.metrics.worldMs = performance.now() - w0;
     const t0 = performance.now();
-    this.syncTerrain();
     this.metrics.pendingTerrain = this.clip.update(this.camera.position.x + this.originX, this.camera.position.z + this.originZ, this.level.terrainMs * Math.max(1, this.opt.simRate));
     this.metrics.terrainMs = performance.now() - t0;
 
@@ -300,6 +325,7 @@ export class Game {
     if (js && loc.s > js.nose) this.stream.enter(loc.path);
     const removed = this.stream.trim(loc.path, loc.s);
     for (const p of removed) this.wear.drop(p);
+    if (removed.length) this.roadside.trimRuns(new Set(this.gen.net.paths.map((q) => q.id)));
     this.wear.trim(loc.path, loc.s - 400);
   }
   private stepCount = 0;

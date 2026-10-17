@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0b1a" />
+    <link rel="icon" href="data:," />
+    <title>DRIVE FM UI preview</title>
+    <link rel="stylesheet" href="../../src/ui/style.css" />
+    <style>
+      #bg { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      #panel {
+        position: fixed; z-index: 100; left: 8px; top: 8px; max-width: 300px; padding: 8px; border-radius: 8px;
+        background: rgba(0, 0, 0, 0.78); color: #ddd; font: 12px/1.3 system-ui, sans-serif; display: flex; flex-wrap: wrap; gap: 4px;
+      }
+      #panel.hidden { display: none; }
+      #panel b { width: 100%; margin-top: 4px; color: #9f9; font-weight: 600; }
+      #panel button { font: inherit; padding: 3px 6px; border: 1px solid #555; border-radius: 4px; background: #222; color: #eee; cursor: pointer; }
+      #panel button:hover { background: #333; }
+      #panel label { display: flex; align-items: center; gap: 4px; width: 100%; }
+      #panel input[type='range'] { flex: 1; }
+      #panel .hint { width: 100%; color: #888; }
+    </style>
+  </head>
+  <body>
+    <canvas id="bg"></canvas>
+    <div id="app"></div>
+    <div id="panel"></div>
+    <script type="module" src="./ui-preview.ts"></script>
+  </body>
+</html>

@@ -415,6 +415,30 @@ export class TerrainClipmap {
   }
 
   /**
+   * Terrain height at (x, z) as drawn by the finest level that holds that spot (triangle
+   * interpolation on that level's grid), or null when no level has it computed.
+   */
+  heightAt(x: number, z: number): number | null {
+    const n = CLIP_N;
+    for (const lv of this.levels) {
+      if (!lv.ready && lv.l > 0) continue;
+      const fx = x / lv.sp, fz = z / lv.sp;
+      const gx = Math.floor(fx), gz = Math.floor(fz);
+      const at = (a: number, b: number) => {
+        const t = (((b % n) + n) % n) * n + (((a % n) + n) % n);
+        return lv.gx[t] === a && lv.gz[t] === b ? lv.h[t] : NaN;
+      };
+      const h00 = at(gx, gz), h11 = at(gx + 1, gz + 1);
+      const u = fx - gx, v = fz - gz;
+      let h: number;
+      if (u >= v) { const h10 = at(gx + 1, gz); h = h00 + (h10 - h00) * u + (h11 - h10) * v; }
+      else { const h01 = at(gx, gz + 1); h = h00 + (h11 - h01) * u + (h01 - h00) * v; }
+      if (!Number.isNaN(h)) return h;
+    }
+    return null;
+  }
+
+  /**
    * The finest computed terrain height at a 4 m grid point, if level 0 holds it (lets the
    * roadside stand things on exactly what is drawn without re-evaluating the field).
    */

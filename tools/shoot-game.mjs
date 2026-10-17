@@ -24,7 +24,7 @@ fs.mkdirSync(outDir, { recursive: true });
 const [W, H] = opt('size', '1280x720').split('x').map(Number);
 let server = null, base = opt('url', '');
 if (!base) {
-  server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1' } });
+  server = await createServer({ root, logLevel: 'error', server: { port: 0, host: '127.0.0.1', watch: null, hmr: false } });
   await server.listen();
   base = `http://127.0.0.1:${server.httpServer.address().port}/`;
 }

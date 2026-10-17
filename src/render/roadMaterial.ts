@@ -16,6 +16,8 @@ attribute vec4 aPaint0;
 attribute vec4 aPaint1;
 attribute vec2 aGore;
 attribute vec3 aTone;
+attribute vec3 aLamp;
+varying vec3 vLamp;
 varying vec2 vST;
 varying vec4 vWear;
 varying vec4 vP0;
@@ -29,7 +31,7 @@ void main() {
   vec4 wp = modelMatrix * vec4(position, 1.0);
   vWP = wp.xyz;
   vN = normalize(mat3(modelMatrix) * normal);
-  vST = aST; vWear = aWear; vP0 = aPaint0; vP1 = aPaint1; vGore = aGore; vTone = aTone;
+  vST = aST; vWear = aWear; vP0 = aPaint0; vP1 = aPaint1; vGore = aGore; vTone = aTone; vLamp = aLamp;
   gl_Position = projectionMatrix * viewMatrix * wp;
 }
 `;
@@ -51,6 +53,7 @@ varying vec2 vGore;
 varying vec3 vTone;
 varying vec3 vN;
 varying vec3 vWP;
+varying vec3 vLamp;
 
 float hash12(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float vnoise(vec2 p) {
@@ -183,6 +186,8 @@ void main() {
   vec3 sunLight = uSunColor * 0.88 + amb * 0.3;
   vec3 col = base * mix(shadeLight, sunLight, sunT);
   col += base * headlight(vWP, N);
+  // baked street-lamp pools (night)
+  col += base * vLamp * uLampsOn;
 
   // ---- standing water: a sky mirror with a sun glint
   float wet = W.a * uDetail;
