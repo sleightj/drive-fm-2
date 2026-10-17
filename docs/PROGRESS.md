@@ -45,7 +45,7 @@ and proves the live link loads headless (`tools/verify-live.mjs` in the Pages wo
 
 ### Next
 - Integrate traffic, people and screen effects; long drives 100 km × 3 seeds in the real
-  game; mood × time contact sheets; checkpoint 3.
+  game; mood × time contact sheets; checkpoint 4.
 
 ## Checkpoint 2 — road generator (2026-10-17)
 Road generator with hard turns, vertical profile, forks and streaming; Node road checks;
