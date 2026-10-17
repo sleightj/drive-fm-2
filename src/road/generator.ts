@@ -792,6 +792,21 @@ export class RoadGenerator {
   }
 
   /** Arc length up to which a path's profile is final (curves at the last VPI not yet fixed). */
+  /**
+   * Where the drawn road of `p` is closed off (dead ends), in its arc length: the start when
+   * nothing leads into it (the very first road, or a road whose trunk was trimmed away), and
+   * the end when no fork continues it. `final` marks an end that will not move again (the
+   * untaken branch of a fork; the live end ahead keeps growing). Matches the chunk builder,
+   * which draws whole 50 m chunks.
+   */
+  closedEnds(p: Path): { s0: number | null; s1: number | null; final: boolean } {
+    const C = 50; // WEAR_CHUNK
+    const s0 = p.parent === null ? Math.ceil(p.base / C) * C : null;
+    let s1: number | null = null;
+    if (p.forkS === null) s1 = Math.floor(Math.min(this.finalEnd(p), p.sampleEnd) / C) * C;
+    return { s0, s1, final: !!(p.gen as GenState | null)?.stopped };
+  }
+
   finalEnd(p: Path): number {
     const v = p.profile.vpis;
     if (v.length < 2) return 0;

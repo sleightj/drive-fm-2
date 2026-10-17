@@ -17,6 +17,7 @@ import { ChunkManager } from '../src/world/chunks';
 import { TerrainField } from '../src/world/terrain';
 import { TerrainClipmap } from '../src/world/terrainClipmap';
 import { Roadside } from '../src/world/roadside';
+import { Skyline } from '../src/world/skyline';
 import { Footprints, overlap } from '../src/world/footprints';
 import { makeRoadMaterial, makeWearPool } from '../src/render/roadMaterial';
 import { makeWorldMaterial } from '../src/render/worldMaterial';
@@ -71,6 +72,7 @@ function run(seed: number) {
   const chunks = new ChunkManager(gen, surface, wearTex, roadMat, {
     radius: L.radius, wearRadius: 260, wearLayers: L.wearLayers, wearW: L.wearW, wearH: L.wearH, wearPx: L.wearPx,
   }, { roadside: (c) => roadside.jobsFor(c), upgrade: (c) => roadside.upgradeJobs(c), removed: (c) => roadside.removed(c) });
+  const skyline = new Skyline({ gen, ground: (x, z) => clip.heightAt(x, z) ?? terrain.gridHeight(Math.round(x / 4), Math.round(z / 4), 4), mat: makeWorldMaterial({ albedo: tex.albedo, emit: tex.emit, cutout: true }), L: tex.L, seed, outer: L.skyline });
   const end = (p: Path) => Math.min(gen.finalEnd(p), p.forkS ?? Infinity, p.sampleEnd);
   const rng = new Rng(seed * 31 + 1);
 
@@ -87,8 +89,14 @@ function run(seed: number) {
   terrain.sync(gen.net.paths, end);
   clip.update(pt.x, pt.z, 1e9, true);
   while (chunks.update(pt.x, pt.z, 1e9) > 0) { /* load */ }
+  const ts = performance.now();
+  skyline.update(pt.x, pt.z, 1e9, true);
+  const skyLoadMs = performance.now() - ts;
   const loadMs = performance.now() - t0;
+  const skyAtLoad = { ...skyline.stats };
+  skyline.stats.maxJobMs = 0;
   for (const k in samples) samples[k] = []; // only count streaming after load
+  const skyMs: number[] = [];
   const frames: { world: number; terrain: number; total: number; km: number; gen: number; sync: number; prep: number; maxBlock: number; job: string }[] = [];
   const mem: { km: number; chunks: number; foot: number; runs: number; heapMB: number; paths: number }[] = [];
   let lastKm = 0;
@@ -116,7 +124,10 @@ function run(seed: number) {
     if (rects.length) clip.invalidate(rects);
     const w0 = performance.now();
     chunks.update(pt.x, pt.z, slice);
+    const k0 = performance.now();
+    skyline.update(pt.x, pt.z, L.skylineMs);
     const w1 = performance.now();
+    skyMs.push(w1 - k0);
     clip.update(pt.x, pt.z, L.terrainMs);
     const f1 = performance.now();
     frames.push({ world: w1 - w0, terrain: f1 - w1, total: f1 - g0, km: driven / 1000, gen: f0 - g0, sync: w0 - f0, prep: chunks.stats.prepMs, maxBlock: clip.stats.lastMaxBlockMs, job: `${chunks.stats.frameMaxJob} ${chunks.stats.frameMaxJobMs.toFixed(1)}` });
@@ -140,6 +151,7 @@ function run(seed: number) {
     frameMs: { p50: +pct(tot, 0.5).toFixed(2), p95: +pct(tot, 0.95).toFixed(2), p99: +pct(tot, 0.99).toFixed(2), max: +tot[tot.length - 1].toFixed(2) },
     over20: frames.filter((f) => f.total > 20).length, over10: frames.filter((f) => f.total > 10).length,
     worst, jobs, overlaps, footprints: all.length,
+    skyline: { loadMs: Math.round(skyLoadMs), atLoad: skyAtLoad, now: skyline.stats, frameMax: +Math.max(...skyMs).toFixed(2), frameP95: +pct([...skyMs].sort((a, b) => a - b), 0.95).toFixed(2) },
     mem: mem.length > 6 ? [mem[0], mem[Math.floor(mem.length / 2)], mem[mem.length - 1]] : mem,
   };
 }

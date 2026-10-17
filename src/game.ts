@@ -10,6 +10,7 @@ import { TerrainClipmap } from './world/terrainClipmap';
 import { loadWorldLayers, WorldLayers } from './render/worldTextures';
 import { GROUND_LAYERS, GROUND_TILES, SURFACES } from './world/kit/street';
 import { Roadside } from './world/roadside';
+import { Skyline } from './world/skyline';
 import { Footprints } from './world/footprints';
 import { makeWorldMaterial } from './render/worldMaterial';
 import { makeActorMaterial, makeInkMaterial } from './render/actorMaterial';
@@ -31,6 +32,7 @@ import { hash32 } from './core/rng';
 import { Traffic } from './traffic/traffic';
 import { People } from './people/people';
 import { Post } from './render/post';
+import type { GpuTimer } from './debug/gpuTimer';
 import { clamp } from './core/math';
 
 export type GameState = 'boot' | 'title' | 'driving' | 'paused';
@@ -49,12 +51,14 @@ export interface LevelSpec {
   terrainMs: number; // terrain slice
   nearR: number; // detailed roadside within this distance
   texScale: number; // world texture size
+  skyline: number; // skyline reaches this far (from the near world's radius outwards)
+  skylineMs: number; // skyline slice
 }
 
 export const LEVELS: Record<GraphicsLevel, LevelSpec> = {
-  high: { scale: 1, radius: 1100, wearLayers: 40, wearPx: 8, wearW: 512, wearH: 256, budgetMs: 4, detail: 1, terrainLevels: 5, terrainMs: 1.5, texScale: 1, nearR: 450 },
-  low: { scale: 0.85, radius: 800, wearLayers: 32, wearPx: 5, wearW: 256, wearH: 128, budgetMs: 3, detail: 0.6, terrainLevels: 4, terrainMs: 1, texScale: 0.5, nearR: 320 },
-  verylow: { scale: 0.6, radius: 500, wearLayers: 24, wearPx: 4, wearW: 256, wearH: 128, budgetMs: 2, detail: 0.3, terrainLevels: 4, terrainMs: 0.8, texScale: 0.5, nearR: 220 },
+  high: { scale: 1, radius: 1100, wearLayers: 40, wearPx: 8, wearW: 512, wearH: 256, budgetMs: 4, detail: 1, terrainLevels: 5, terrainMs: 1.5, texScale: 1, nearR: 450, skyline: 3000, skylineMs: 1 },
+  low: { scale: 0.85, radius: 800, wearLayers: 32, wearPx: 5, wearW: 256, wearH: 128, budgetMs: 3, detail: 0.6, terrainLevels: 4, terrainMs: 1, texScale: 0.5, nearR: 320, skyline: 2200, skylineMs: 0.8 },
+  verylow: { scale: 0.6, radius: 500, wearLayers: 24, wearPx: 4, wearW: 256, wearH: 128, budgetMs: 2, detail: 0.3, terrainLevels: 4, terrainMs: 0.8, texScale: 0.5, nearR: 220, skyline: 1400, skylineMs: 0.6 },
 };
 
 const DT = 1 / 120;
@@ -72,6 +76,8 @@ export interface GameOptions {
   fixedStep?: boolean;
   /** start in this mood's district (tests, contact sheets) */
   startMood?: Mood | null;
+  /** draw only every Nth frame (long automated drives: the simulation and streaming still run every frame) */
+  renderEvery?: number;
 }
 
 export class Game {
@@ -88,6 +94,7 @@ export class Game {
   clip!: TerrainClipmap;
   tex!: WorldLayers;
   roadside!: Roadside;
+  skyline!: Skyline;
   foot = new Footprints();
   traffic!: Traffic;
   people!: People;
@@ -115,7 +122,9 @@ export class Game {
   /** Called once per frame after the simulation (UI: boost meter). */
   onFrame: (() => void) | null = null;
   graphics: GraphicsLevel;
-  private mats!: { world: ShaderMaterial; decal: ShaderMaterial; road: ShaderMaterial };
+  /** GPU timer around the frame's draw (benchmark overlay) */
+  gpuTimer: GpuTimer | null = null;
+  private mats!: { world: ShaderMaterial; decal: ShaderMaterial; road: ShaderMaterial; sky: ShaderMaterial };
   private texScale = 1;
   private gfxTok = 0;
   private moodW = [0, 0, 0, 0, 0, 0];
@@ -137,6 +146,7 @@ export class Game {
     this.stream = new RoadStream(this.gen);
     this.wear = new WearField(opt.seed, (x, z) => this.gen.districts.moodAt(x, z));
     this.surface = new RoadSurface(this.gen.net, this.wear);
+    this.surface.closedAt = (p) => this.gen.closedEnds(p);
     this.terrain = new TerrainField(opt.seed, this.gen.districts);
     this.car = new Car(this.surface);
     this.input = new Input();
@@ -185,7 +195,10 @@ export class Game {
     decalMat.polygonOffset = true;
     decalMat.polygonOffsetFactor = -1;
     decalMat.polygonOffsetUnits = -4;
-    this.mats = { world: worldMat, decal: decalMat, road: roadMat };
+    const skyMat = makeWorldMaterial({ albedo: this.tex.albedo, emit: this.tex.emit, cutout: true });
+    this.mats = { world: worldMat, decal: decalMat, road: roadMat, sky: skyMat };
+    this.skyline = new Skyline({ gen: this.gen, ground: (x, z) => this.clip.heightAt(x, z) ?? this.terrain.gridHeight(Math.round(x / 4), Math.round(z / 4), 4), mat: skyMat, L: this.tex.L, seed: this.opt.seed, outer: L.skyline });
+    this.scene.add(this.skyline.root);
     const propMat = makeActorMaterial({ style: PROP_STYLE, slots: PROP_SLOTS_LIST });
     const inkMat = makeInkMaterial(1);
     this.roadside = new Roadside({
@@ -218,6 +231,9 @@ export class Game {
     progress(0.7, 'city');
     let guard = 0;
     while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 50) { /* all */ }
+    this.roadside.updateClosures(this.chunks.chunks);
+    progress(0.85, 'skyline');
+    this.skyline.update(this.car.x, this.car.z, 1e9, true);
     progress(0.9, 'cars');
     await Promise.all([trafficP, peopleP]);
     progress(0.95, 'ready');
@@ -251,6 +267,7 @@ export class Game {
     this.post.setLevel(g);
     this.resize();
     this.chunks.opt.radius = L.radius;
+    this.skyline.setRadius(L.skyline);
     this.roadside.d.nearR = L.nearR;
     this.roadside.d.detail = L.detail;
     if (L.nearR < prev.nearR) this.chunks.requeue((c) => this.roadside.downgradeJobs(c));
@@ -273,7 +290,8 @@ export class Game {
       this.tex = tex;
       this.texScale = L.texScale;
       this.roadside.d.tex = tex;
-      for (const m of [this.mats.world, this.mats.decal]) { m.uniforms.uAlbedo.value = tex.albedo; m.uniforms.uEmit.value = tex.emit; }
+      this.skyline.d.L = tex.L;
+      for (const m of [this.mats.world, this.mats.decal, this.mats.sky]) { m.uniforms.uAlbedo.value = tex.albedo; m.uniforms.uEmit.value = tex.emit; }
       this.clip.setAlbedo(tex.albedo);
       old.albedo.dispose();
       old.emit.dispose();
@@ -297,6 +315,7 @@ export class Game {
     this.originZ = Math.round(z / 100) * 100;
     this.chunks.rebase(this.originX, this.originZ);
     this.clip?.setOrigin(this.originX, this.originZ);
+    this.skyline?.rebase(this.originX, this.originZ);
   }
 
   /** Keep the land's road stations in step with the live network. */
@@ -389,6 +408,8 @@ export class Game {
     this.syncTerrain();
     const w0 = performance.now();
     this.metrics.pendingChunks = this.chunks.update(this.car.x, this.car.z, this.level.budgetMs * Math.max(1, this.opt.simRate));
+    this.skyline.update(this.car.x, this.car.z, this.level.skylineMs * Math.max(1, this.opt.simRate));
+    this.roadside.updateClosures(this.chunks.chunks);
     this.metrics.worldMs = performance.now() - w0;
     const t0 = performance.now();
     this.metrics.pendingTerrain = this.clip.update(this.camera.position.x + this.originX, this.camera.position.z + this.originZ, this.level.terrainMs * Math.max(1, this.opt.simRate));
@@ -405,7 +426,11 @@ export class Game {
     if (this.car.impact > 1.2) this.chase.shake = Math.min(1.5, this.car.impact * 0.2);
 
     const r0 = performance.now();
-    this.post.render(this.scene, this.camera, { dt, kmh: this.car.kmh, boost: this.car.boosting ? 1 : 0, night: st.night });
+    if (!this.opt.renderEvery || this.frame % this.opt.renderEvery === 0) {
+      this.gpuTimer?.begin();
+      this.post.render(this.scene, this.camera, { dt, kmh: this.car.kmh, boost: this.car.boosting ? 1 : 0, night: st.night });
+      this.gpuTimer?.end();
+    }
     this.metrics.renderMs = performance.now() - r0;
     this.onFrame?.();
     this.metrics.frameMs = performance.now() - f0;

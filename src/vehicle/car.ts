@@ -66,6 +66,7 @@ export interface WheelState {
   loc: Loc;
 }
 
+const _end = { nx: 0, nz: 0 };
 export class Car {
   // planar state (world)
   x = 0;
@@ -404,6 +405,9 @@ export class Car {
         const rx = lx * bx + fx * bz, rz = lz * bx + fz * bz;
         const px = this.x + rx, pz = this.z + rz;
         if (!this.surf.locate(px, pz, loc, loc)) continue;
+        // a closed road end is a wall across the road
+        const e = this.surf.endDepth(loc.path!, loc.s, px, pz, _end);
+        if (e > worst) { worst = e; wnx = _end.nx; wnz = _end.nz; wrx = rx; wrz = rz; wn = 1; }
         if (loc.inside || loc.side === 0) continue;
         if (loc.out > worst) {
           worst = loc.out;
@@ -439,6 +443,45 @@ export class Car {
         if (-vn > 1.5) this.stats.wallHits++;
       }
     }
+  }
+
+  /**
+   * A contact with another body (a traffic car), solved like the walls in collideRoad(): one impulse
+   * at the contact point (px, pz) along the unit normal (nx, nz), which points from the other body
+   * toward this car, with restitution and friction, plus separation of the penetration `depth`
+   * shared by inverse mass. Applies this car's share and writes the other body's: the impulse
+   * (jx, jz) to add to it and how far (`push`) to move it along -n.
+   */
+  applyContact(
+    px: number, pz: number, nx: number, nz: number, depth: number,
+    o: { mass: number; inertia: number; x: number; z: number; vx: number; vz: number; yawRate: number },
+    out: { jx: number; jz: number; push: number },
+  ) {
+    const m = this.spec.mass;
+    const im = 1 / m, iom = 1 / o.mass;
+    const share = im / (im + iom);
+    this.x += nx * depth * share;
+    this.z += nz * depth * share;
+    out.push = depth * (1 - share);
+    out.jx = 0; out.jz = 0;
+    const rx = px - this.x, rz = pz - this.z, ox = px - o.x, oz = pz - o.z;
+    // relative velocity of the two contact points
+    const vrx = this.vx + this.yawRate * rz - (o.vx + o.yawRate * oz);
+    const vrz = this.vz - this.yawRate * rx - (o.vz - o.yawRate * ox);
+    const vn = vrx * nx + vrz * nz;
+    if (vn >= 0) return;
+    const e = 0.15;
+    const rn = rz * nx - rx * nz, on = oz * nx - ox * nz;
+    const invM = im + iom + (rn * rn) / this.Iyaw + (on * on) / o.inertia;
+    const j = (-(1 + e) * vn) / invM;
+    const tx = -nz, tz = nx;
+    const jt = clamp(-(vrx * tx + vrz * tz) / invM, -0.3 * j, 0.3 * j);
+    const Jx = nx * j + tx * jt, Jz = nz * j + tz * jt;
+    this.vx += Jx * im;
+    this.vz += Jz * im;
+    this.yawRate += ((rz * Jx - rx * Jz) / this.Iyaw) * 0.6;
+    this.impact = Math.max(this.impact, -vn * 0.4);
+    out.jx = -Jx; out.jz = -Jz;
   }
 
   get kmh() { return Math.hypot(this.vx, this.vz) * 3.6; }

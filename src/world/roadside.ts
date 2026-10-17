@@ -244,8 +244,81 @@ export class Roadside {
   removed(c: Chunk) {
     const st = this.state.get(c.key);
     if (st) for (const m of st.meshes) m.geometry.dispose();
+    for (const [k, cl] of this.closures) if (cl.c === c) { for (const m of cl.meshes) m.geometry.dispose(); this.closures.delete(k); }
     this.state.delete(c.key);
     this.d.foot.removeOwner(c.key);
+  }
+
+  /**
+   * Barricades across closed road ends (the start of the network, a road whose trunk was
+   * trimmed away, the end of a fork's untaken branch): A-frame barriers across every lane,
+   * no-entry signs at the kerbs and a works board. Cheap to call every frame; a closure is
+   * built once the chunk it stands in is finished, and goes with that chunk.
+   */
+  updateClosures(chunks: Map<string, Chunk>) {
+    const want = new Set<string>();
+    for (const p of this.d.gen.net.paths) {
+      const e = this.d.gen.closedEnds(p);
+      for (const [s, dir] of [[e.s0, 1], [e.s1, -1]] as [number | null, 1 | -1][]) {
+        if (s === null || (dir === -1 && !e.final)) continue;
+        const ci = dir === 1 ? Math.round(s / 50) : Math.round(s / 50) - 1;
+        const c = chunks.get(`${p.id}:${ci}`);
+        if (!c || !this.state.get(c.key)?.done) continue;
+        const key = `${p.id}:${dir}:${s}`;
+        want.add(key);
+        if (!this.closures.has(key)) this.closures.set(key, { c, meshes: this.buildClosure(c, s, dir) });
+      }
+    }
+    for (const [k, cl] of this.closures) {
+      if (want.has(k)) continue;
+      for (const m of cl.meshes) { cl.c.group.remove(m); m.geometry.dispose(); }
+      this.closures.delete(k);
+    }
+  }
+  private closures = new Map<string, { c: Chunk; meshes: Mesh[] }>();
+
+  private buildClosure(c: Chunk, s: number, dir: 1 | -1): Mesh[] {
+    const p = c.path, xs = _xs;
+    const w = new WorldGeom(), ik = new InkedGeom();
+    const m = new Matrix4();
+    const sb = s + dir * 0.9; // barriers just inside the drawn road
+    p.xsAt(sb, xs);
+    const [lo, hi] = p.drivableAt(sb, xs);
+    p.pointAt(sb, _pt);
+    const yaw = dir === 1 ? _pt.h : _pt.h + Math.PI; // facing drivers coming toward the end
+    const lx = Math.cos(_pt.h), lz = -Math.sin(_pt.h), fx = Math.sin(_pt.h), fz = Math.cos(_pt.h);
+    const put = (type: string, t: number, back: number, seed: number) => {
+      const x = _pt.x + lx * t - fx * dir * back, z = _pt.z + lz * t - fz * dir * back;
+      const y = this.d.surface.baseHeight(p, sb - dir * back, t);
+      m.makeRotationY(yaw).setPosition(x - c.ox, y, z - c.oz);
+      const e = this.prop(type, seed);
+      w.append(e.world, m);
+      ik.append(e.inked, m);
+    };
+    // barriers across the carriageways (a raised median keeps its own kerbs)
+    const med = Math.max(xs.median, 0);
+    const n = Math.max(2, Math.round((hi - lo - 0.6) / 1.55));
+    for (let i = 0; i <= n; i++) {
+      const t = lo + 0.3 + ((hi - lo - 0.6) * i) / n;
+      if (med > 0 && Math.abs(t) < med + 0.4) continue;
+      put('barrier', t, 0, i);
+    }
+    // no-entry at both kerbs, a works board behind the middle
+    put('sign_noentry', hi - 0.2, 1.6, 0);
+    put('sign_noentry', lo + 0.2, 1.6, 1);
+    put('works_board', med > 0 ? med + 2 : (lo + hi) / 2, 2.4, 0);
+    put('cone', med > 0 ? -med - 2 : (lo + hi) / 2 + 2.5, 2.2, 3);
+    const out: Mesh[] = [];
+    if (w.vertexCount) { const mm = new Mesh(w.toGeometry(), this.d.mats.world); mm.name = 'closure'; mm.matrixAutoUpdate = false; out.push(mm); }
+    if (ik.vertexCount) {
+      const g = ik.toGeometry();
+      addSmoothNormals(g);
+      g.computeBoundingSphere();
+      const pm = new Mesh(g, this.d.mats.prop); pm.name = 'closure'; pm.matrixAutoUpdate = false; out.push(pm);
+      const ink = new Mesh(g, this.d.mats.ink); ink.name = 'ink'; ink.matrixAutoUpdate = false; ink.renderOrder = -1; out.push(ink);
+    }
+    for (const mm of out) { c.group.add(mm); mm.updateMatrixWorld(true); }
+    return out;
   }
 
   /** Forget cached frontage runs of paths that no longer exist (memory stays flat). */

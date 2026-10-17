@@ -67,8 +67,12 @@ export class RoadNetwork {
     this.indexed.set(p, from);
   }
 
+  /** Told about every corridor segment as it is added (the skyline keeps clear of new roads). */
+  corridorListeners: ((seg: CorridorSeg) => void)[] = [];
+
   addCorridor(seg: CorridorSeg) {
     const r = seg.r;
+    for (const f of this.corridorListeners) f(seg);
     this.corridors.insert(seg, Math.min(seg.x0, seg.x1) - r, Math.min(seg.z0, seg.z1) - r, Math.max(seg.x0, seg.x1) + r, Math.max(seg.z0, seg.z1) + r);
     this.corrList.get(seg.path)!.push(seg);
   }

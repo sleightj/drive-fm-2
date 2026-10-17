@@ -32,6 +32,31 @@ export class RoadSurface {
    * Locate (x, z) on the road. Tries the hint path first (cheap), then every path nearby.
    * Inside means: within some path's drivable band and not on a raised median.
    */
+  /** Closed road ends (set by the game from the generator); null: only the data's own ends. */
+  closedAt: ((p: Path) => { s0: number | null; s1: number | null }) | null = null;
+
+  /**
+   * How far (x, z), located on `p` at arc length `s`, is past a closed end of the road
+   * (0 when not), with the inward normal in `out`: road ends are solid walls.
+   */
+  endDepth(p: Path, s: number, x: number, z: number, out: { nx: number; nz: number }): number {
+    const c = this.closedAt?.(p);
+    if (!c) return 0;
+    if (c.s0 !== null && s < c.s0 + 4) {
+      p.pointAt(c.s0, _pt);
+      const tx = Math.sin(_pt.h), tz = Math.cos(_pt.h);
+      const along = (x - _pt.x) * tx + (z - _pt.z) * tz;
+      if (along < 0.5) { out.nx = tx; out.nz = tz; return 0.5 - along; }
+    }
+    if (c.s1 !== null && s > c.s1 - 4) {
+      p.pointAt(c.s1, _pt);
+      const tx = Math.sin(_pt.h), tz = Math.cos(_pt.h);
+      const along = (x - _pt.x) * tx + (z - _pt.z) * tz;
+      if (along > -0.5) { out.nx = -tx; out.nz = -tz; return along + 0.5; }
+    }
+    return 0;
+  }
+
   locate(x: number, z: number, hint: Loc | null, out: Loc): boolean {
     if (hint && hint.path && this.net.paths.includes(hint.path)) {
       this.net.projectOn(hint.path, x, z, hint.s, this.proj);
