@@ -65,6 +65,8 @@ export interface GameOptions {
   /** simulation steps per rendered frame multiplier (tests) */
   simRate: number;
   freezeTime: boolean;
+  /** every frame advances exactly 1/60 s of game time (benchmarks: same work per metre at any frame rate) */
+  fixedStep?: boolean;
 }
 
 export class Game {
@@ -186,7 +188,7 @@ export class Game {
     this.clip.update(this.car.x, this.car.z, 1e9, true);
     progress(0.7, 'city');
     let guard = 0;
-    while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 3) { /* all */ }
+    while (this.chunks.update(this.car.x, this.car.z, 1e9) > 0 && guard++ < 50) { /* all */ }
     progress(0.95, 'ready');
     this.resize();
     this.applyEnv(0);
@@ -250,7 +252,7 @@ export class Game {
     const now = performance.now();
     let dt = (now - this.last) / 1000;
     this.last = now;
-    dt = Math.min(dt, 0.1);
+    dt = this.opt.fixedStep ? 1 / 60 : Math.min(dt, 0.1);
     const f0 = performance.now();
     const ctl = this.input.read(dt);
     this.frame++;
@@ -313,14 +315,20 @@ export class Game {
     this.metrics.renderMs = performance.now() - r0;
     this.metrics.frameMs = performance.now() - f0;
     if (this.frame > 30) this.metrics.maxFrameMs = Math.max(this.metrics.maxFrameMs, this.metrics.frameMs);
+    if (this.rec) {
+      const m = this.metrics, ri = this.renderer.info.render;
+      this.rec.push(m.frameMs, m.simMs, m.worldMs, m.terrainMs, m.renderMs, ri.calls, ri.triangles, this.car.odometer);
+    }
   }
+  /** Per-frame samples for the perf tools: frameMs, simMs, worldMs, terrainMs, renderMs, calls, triangles, odometer. */
+  rec: number[] | null = null;
 
   /** Generation ahead, commit at forks, trimming behind: the road follows the car. */
   private roadBookkeeping() {
     const loc = this.car.loc;
     if (!loc.path) return;
     if (this.stepCount++ % 12 !== 0) return;
-    this.stream.ensure(loc.path, loc.s);
+    this.stream.ensure(loc.path, loc.s, 2);
     const js = loc.path.junctionStart;
     if (js && loc.s > js.nose) this.stream.enter(loc.path);
     const removed = this.stream.trim(loc.path, loc.s);

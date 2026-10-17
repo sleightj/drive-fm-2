@@ -22,15 +22,18 @@ export class RoadStream {
    * Generate ahead of (path, s): along the path, and through forks into both branches up to
    * BRANCH_HORIZON, and beyond that along committed branches.
    */
-  ensure(path: Path, s: number) {
+  ensure(path: Path, s: number, budgetMs = Infinity) {
     const want = s + this.horizon;
+    this.deadline = performance.now() + budgetMs;
     this.extendChain(path, want);
   }
+  /** Generation stops planning new pieces after this time (it carries on at the next call). */
+  private deadline = Infinity;
 
   private extendChain(p: Path, untilS: number) {
     // untilS is measured in this path's arc length
     if (p.forkS === null) {
-      this.gen.extend(p, untilS);
+      this.gen.extend(p, untilS, this.deadline);
     }
     if (p.forkS !== null) {
       this.gen.extendProfile(p, true);

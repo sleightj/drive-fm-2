@@ -240,10 +240,8 @@ export function rutHeight(xs: CrossSection, t: number, depth: number): number {
   let h = 0;
   for (let i = 0; i < n; i++) {
     const c = laneCenter(xs, side, i);
-    for (const o of [-0.78, 0.78]) {
-      const d = (t - (c + o)) / 0.32;
-      h -= depth * Math.exp(-d * d);
-    }
+    const d0 = (t - (c - 0.78)) / 0.32, d1 = (t - (c + 0.78)) / 0.32;
+    h -= depth * (Math.exp(-d0 * d0) + Math.exp(-d1 * d1));
   }
   return h;
 }
@@ -278,15 +276,29 @@ export const WEAR_HEIGHT_RANGE = 0.12; // ± metres encoded in the height channe
  *  ~110 patch, ~170 trench seal, 255 iron lid), A standing water.
  */
 export function rasterWear(field: WearField, p: Path, s0: number, tMin: number, px: number, py: number, W: number, H: number, out: Uint8Array) {
+  rasterWearColumns(field, p, s0, tMin, px, py, W, H, out, 0, W);
+}
+
+let _hbuf = new Float32Array(0);
+
+/**
+ * The columns [xa, xb) of a wear tile (columns run along s, so a tile can be filled in bands
+ * over several frames; every band is exactly what the whole tile would hold there).
+ */
+export function rasterWearColumns(field: WearField, p: Path, s0: number, tMin: number, px: number, py: number, W: number, H: number, out: Uint8Array, xa: number, xb: number) {
   const sc = 127 / WEAR_HEIGHT_RANGE;
+  if (_hbuf.length < W * H) _hbuf = new Float32Array(W * H);
+  const hbuf = _hbuf;
   // clear: neutral height, no masks
-  for (let i = 0; i < W * H; i++) { out[i * 4] = 128; out[i * 4 + 1] = 0; out[i * 4 + 2] = 0; out[i * 4 + 3] = 0; }
-  const hbuf = new Float32Array(W * H);
-  const ci0 = Math.floor(s0 / WEAR_CHUNK) - 1, ci1 = Math.floor((s0 + W / px) / WEAR_CHUNK) + 1;
-  const sEnd = s0 + W / px;
+  for (let y = 0; y < H; y++) for (let x = xa; x < xb; x++) {
+    const i = y * W + x, o = i * 4;
+    hbuf[i] = 0; out[o] = 128; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+  }
+  const sA = s0 + xa / px, sB = s0 + xb / px;
+  const ci0 = Math.floor(sA / WEAR_CHUNK) - 1, ci1 = Math.floor(sB / WEAR_CHUNK) + 1;
   const tEnd = tMin + H / py;
-  // ruts: row by row
-  for (let x = 0; x < W; x++) {
+  // ruts: column by column, only across the carriageway
+  for (let x = xa; x < xb; x++) {
     const s = s0 + (x + 0.5) / px;
     if (s < p.base || s > p.sampleEnd) continue;
     const ci = Math.floor(s / WEAR_CHUNK);
@@ -295,20 +307,34 @@ export function rasterWear(field: WearField, p: Path, s0: number, tMin: number, 
     const depth = c.rut0 + (c.rut1 - c.rut0) * u;
     if (depth < 0.001) continue;
     p.xsAt(s, _xs);
-    for (let y = 0; y < H; y++) {
-      const t = tMin + (y + 0.5) / py;
-      if (t < _xs.kerbR || t > _xs.kerbL) continue;
-      hbuf[y * W + x] += rutHeight(_xs, t, depth);
+    const y0 = Math.max(0, Math.ceil((_xs.kerbR - tMin) * py - 0.5)), y1 = Math.min(H - 1, Math.floor((_xs.kerbL - tMin) * py - 0.5));
+    // each rut is a Gaussian 0.32 m wide: only the texels within 1.1 m of its centre matter
+    // (the same sum as rutHeight, whose terms beyond that are below 1e-5 of the depth)
+    for (const side of [1, -1] as const) {
+      const nl = side > 0 ? _xs.lanesOut : _xs.lanesIn;
+      for (let li = 0; li < nl; li++) {
+        const lc = laneCenter(_xs, side, li);
+        for (let k = -1; k <= 1; k += 2) {
+          const tc = lc + k * 0.78;
+          const ya = Math.max(y0, Math.ceil((tc - 1.1 - tMin) * py - 0.5)), yb = Math.min(y1, Math.floor((tc + 1.1 - tMin) * py - 0.5));
+          for (let y = ya; y <= yb; y++) {
+            const t = tMin + (y + 0.5) / py;
+            if ((t >= 0 ? 1 : -1) !== side) continue;
+            const d = (t - tc) / 0.32;
+            hbuf[y * W + x] -= depth * Math.exp(-d * d);
+          }
+        }
+      }
     }
   }
   for (let ci = Math.max(0, ci0); ci <= ci1; ci++) {
     const c = field.chunk(p, ci);
     for (const f of c.features) {
-      if (f.s + f.hs < s0 || f.s - f.hs > sEnd || f.t + f.ht < tMin || f.t - f.ht > tEnd) continue;
-      const xa = Math.max(0, Math.floor((f.s - f.hs - s0) * px)), xb = Math.min(W - 1, Math.ceil((f.s + f.hs - s0) * px));
+      if (f.s + f.hs < sA || f.s - f.hs > sB || f.t + f.ht < tMin || f.t - f.ht > tEnd) continue;
+      const x0 = Math.max(xa, Math.floor((f.s - f.hs - s0) * px)), x1 = Math.min(xb - 1, Math.ceil((f.s + f.hs - s0) * px));
       const ya = Math.max(0, Math.floor((f.t - f.ht - tMin) * py)), yb = Math.min(H - 1, Math.ceil((f.t + f.ht - tMin) * py));
-      if (f.kind === 'cracks') { rasterCracks(f, s0, tMin, px, py, W, H, out); continue; }
-      for (let x = xa; x <= xb; x++) {
+      if (f.kind === 'cracks') { rasterCracks(f, s0, tMin, px, py, W, H, out, xa, xb); continue; }
+      for (let x = x0; x <= x1; x++) {
         const s = s0 + (x + 0.5) / px;
         for (let y = ya; y <= yb; y++) {
           const t = tMin + (y + 0.5) / py;
@@ -350,16 +376,19 @@ export function rasterWear(field: WearField, p: Path, s0: number, tMin: number, 
       }
     }
   }
-  for (let i = 0; i < W * H; i++) out[i * 4] = clamp(Math.round(128 + hbuf[i] * sc), 0, 255);
+  for (let y = 0; y < H; y++) for (let x = xa; x < xb; x++) {
+    const i = y * W + x;
+    out[i * 4] = clamp(Math.round(128 + hbuf[i] * sc), 0, 255);
+  }
 }
 
 /** A crack network: a few branching random walks drawn into the line mask. */
-function rasterCracks(f: WearFeature, s0: number, tMin: number, px: number, py: number, W: number, H: number, out: Uint8Array) {
+function rasterCracks(f: WearFeature, s0: number, tMin: number, px: number, py: number, W: number, H: number, out: Uint8Array, xa = 0, xb = W) {
   const rng = new Rng(f.seed);
   const n = rng.int(2, 5);
   const plot = (s: number, t: number, v: number) => {
     const x = Math.floor((s - s0) * px), y = Math.floor((t - tMin) * py);
-    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    if (x < xa || y < 0 || x >= xb || y >= H) return;
     const o = (y * W + x) * 4 + 1;
     out[o] = Math.max(out[o], v);
   };

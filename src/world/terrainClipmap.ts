@@ -22,6 +22,8 @@ export const CLIP_N = 128;
 const B = 8; // block size (texels) for CPU evaluation
 const INVALID = 0x7fffffff;
 
+interface Blk { bx: number; bz: number; x0: number; z0: number; x1: number; z1: number }
+
 interface Level {
   l: number;
   sp: number;
@@ -30,9 +32,12 @@ interface Level {
   ready: boolean; // every texel of the shown region has been computed at least once
   gx: Int32Array; // grid coords each texel currently holds
   gz: Int32Array;
-  h: Float32Array;
-  m: Uint8Array; // 8 bytes per texel
+  h: Float32Array; // this level's layer of the height texture
+  ma: Uint8Array; // this level's two layers of the material texture (mood weights 0-3; 4-5, road, variation)
+  mb: Uint8Array;
   dirty: boolean;
+  /** blocks still to compute for the current target, each with the box of texels it lacks (null: rescan) */
+  list: Blk[] | null;
   changed: boolean; // needs upload
 }
 
@@ -207,22 +212,29 @@ export class TerrainClipmap {
   private blockH = new Float32Array(B * B);
   private blockM = new Uint8Array(B * B * 8);
   private origin = new Vector2();
-  stats = { blocks: 0, ms: 0, pendingBlocks: 0 };
+  stats = { blocks: 0, ms: 0, pendingBlocks: 0, lastMaxBlockMs: 0, maxBlockMs: 0 };
 
   constructor(public field: TerrainField, public opt: ClipmapOptions) {
     const L = opt.levels, n = CLIP_N;
+    const H = new Float32Array(n * n * L), M = new Uint8Array(n * n * 4 * L * 2);
     for (let l = 0; l < L; l++) {
       const gx = new Int32Array(n * n).fill(INVALID), gz = new Int32Array(n * n).fill(INVALID);
-      this.levels.push({ l, sp: 4 * 2 ** l, shown: new Vector2(), target: new Vector2(), ready: false, gx, gz, h: new Float32Array(n * n), m: new Uint8Array(n * n * 8), dirty: true, changed: false });
+      this.levels.push({
+        l, sp: 4 * 2 ** l, shown: new Vector2(), target: new Vector2(), ready: false, gx, gz,
+        h: H.subarray(l * n * n, (l + 1) * n * n),
+        ma: M.subarray(2 * l * n * n * 4, (2 * l + 1) * n * n * 4),
+        mb: M.subarray((2 * l + 1) * n * n * 4, (2 * l + 2) * n * n * 4),
+        dirty: true, list: null, changed: false,
+      });
     }
-    this.heightTex = new DataArrayTexture(new Float32Array(n * n * L), n, n, L);
+    this.heightTex = new DataArrayTexture(H, n, n, L);
     this.heightTex.format = RedFormat;
     this.heightTex.type = FloatType;
     this.heightTex.minFilter = this.heightTex.magFilter = NearestFilter;
     this.heightTex.generateMipmaps = false;
     this.heightTex.wrapS = this.heightTex.wrapT = ClampToEdgeWrapping;
     this.heightTex.needsUpdate = true;
-    this.matTex = new DataArrayTexture(new Uint8Array(n * n * 4 * L * 2), n, n, L * 2);
+    this.matTex = new DataArrayTexture(M, n, n, L * 2);
     this.matTex.format = RGBAFormat;
     this.matTex.type = UnsignedByteType;
     this.matTex.minFilter = this.matTex.magFilter = LinearFilter;
@@ -286,6 +298,7 @@ export class TerrainClipmap {
           lv.gx[t] = INVALID;
         }
         lv.dirty = true;
+        lv.list = null;
       }
     }
   }
@@ -307,33 +320,42 @@ export class TerrainClipmap {
         if (far || !lv.ready) { lv.target.set(tx, tz); lv.ready = false; }
         else lv.target.set(lv.shown.x + Math.sign(tx - lv.shown.x) * Math.min(2, Math.abs(tx - lv.shown.x)), lv.shown.y + Math.sign(tz - lv.shown.y) * Math.min(2, Math.abs(tz - lv.shown.y)));
         lv.dirty = true;
+        lv.list = null;
       }
     }
-    // collect blocks that need work, nearest to the camera first, finer levels first on ties
-    const todo: { lv: Level; bx: number; bz: number; d: number }[] = [];
+    // blocks that need work (scanned once per change of target or invalidation), nearest to
+    // the camera first, finer levels first on ties
+    const todo: { lv: Level; b: Blk; d: number }[] = [];
     for (const lv of this.levels) {
       if (!lv.dirty) continue;
-      const gx0 = lv.target.x - n / 2, gz0 = lv.target.y - n / 2;
-      const bx0 = Math.floor(gx0 / B), bx1 = Math.floor((gx0 + n - 1) / B);
-      const bz0 = Math.floor(gz0 / B), bz1 = Math.floor((gz0 + n - 1) / B);
-      let any = false;
-      for (let bz = bz0; bz <= bz1; bz++) for (let bx = bx0; bx <= bx1; bx++) {
-        if (!this.blockNeeds(lv, bx, bz)) continue;
-        any = true;
-        const d = Math.hypot((bx + 0.5) * B * lv.sp - cx, (bz + 0.5) * B * lv.sp - cz);
-        todo.push({ lv, bx, bz, d: d * (1 + lv.l * 0.15) });
+      if (!lv.list) lv.list = this.scan(lv);
+      if (!lv.list.length) { this.settle(lv); continue; }
+      for (const b of lv.list) {
+        const d = Math.hypot((b.bx + 0.5) * B * lv.sp - cx, (b.bz + 0.5) * B * lv.sp - cz);
+        todo.push({ lv, b, d: d * (1 + lv.l * 0.15) });
       }
-      if (!any) this.settle(lv);
     }
     todo.sort((a, b) => a.d - b.d);
     let done = 0;
+    const doneSet = new Set<Level>();
+    this.stats.lastMaxBlockMs = 0;
     for (const b of todo) {
       if (!force && performance.now() - t0 > budgetMs) break;
-      this.computeBlock(b.lv, b.bx, b.bz);
+      const tb = performance.now();
+      this.computeBlock(b.lv, b.b);
+      const dt = performance.now() - tb;
+      if (dt > this.stats.lastMaxBlockMs) this.stats.lastMaxBlockMs = dt;
+      if (!force && dt > this.stats.maxBlockMs) this.stats.maxBlockMs = dt;
+      doneSet.add(b.lv);
       done++;
     }
     pending = todo.length - done;
-    for (const lv of this.levels) if (lv.dirty && !this.levelNeeds(lv)) this.settle(lv);
+    // drop computed blocks from their level's list; a level with none left is complete
+    for (const lv of doneSet) {
+      const left = todo.slice(done).filter((b) => b.lv === lv).map((b) => b.b);
+      lv.list = left;
+      if (!left.length) this.settle(lv);
+    }
     this.upload();
     for (let l = 0; l < this.levels.length; l++) {
       this.meshes[l].visible = this.levels[l].ready;
@@ -345,29 +367,34 @@ export class TerrainClipmap {
     return pending;
   }
 
-  private inTarget(lv: Level, gx: number, gz: number) {
-    const n = CLIP_N;
-    return gx >= lv.target.x - n / 2 && gx < lv.target.x + n / 2 && gz >= lv.target.y - n / 2 && gz < lv.target.y + n / 2;
-  }
-
-  private blockNeeds(lv: Level, bx: number, bz: number): boolean {
-    const n = CLIP_N;
-    for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) {
-      const gx = bx * B + i, gz = bz * B + j;
-      if (!this.inTarget(lv, gx, gz)) continue;
-      const t = (((gz % n) + n) % n) * n + (((gx % n) + n) % n);
-      if (lv.gx[t] !== gx || lv.gz[t] !== gz) return true;
+  /**
+   * Blocks of the level's target window holding texels that are not current, each with the
+   * box of those texels (a one-texel move of the window only recomputes the new row).
+   */
+  private scan(lv: Level): Blk[] {
+    const n = CLIP_N, mask = n - 1;
+    const gx0 = lv.target.x - n / 2, gz0 = lv.target.y - n / 2;
+    const out: Blk[] = [];
+    const bx0 = Math.floor(gx0 / B), bx1 = Math.floor((gx0 + n - 1) / B);
+    const bz0 = Math.floor(gz0 / B), bz1 = Math.floor((gz0 + n - 1) / B);
+    for (let bz = bz0; bz <= bz1; bz++) {
+      const za = Math.max(bz * B, gz0), zb = Math.min(bz * B + B - 1, gz0 + n - 1);
+      for (let bx = bx0; bx <= bx1; bx++) {
+        const xa = Math.max(bx * B, gx0), xb = Math.min(bx * B + B - 1, gx0 + n - 1);
+        let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+        for (let gz = za; gz <= zb; gz++) {
+          const row = (gz & mask) * n;
+          for (let gx = xa; gx <= xb; gx++) {
+            const t = row + (gx & mask);
+            if (lv.gx[t] !== gx || lv.gz[t] !== gz) {
+              if (gx < x0) x0 = gx; if (gx > x1) x1 = gx; if (gz < z0) z0 = gz; if (gz > z1) z1 = gz;
+            }
+          }
+        }
+        if (x1 >= x0) out.push({ bx, bz, x0, z0, x1, z1 });
+      }
     }
-    return false;
-  }
-
-  private levelNeeds(lv: Level): boolean {
-    const n = CLIP_N;
-    for (let gz = lv.target.y - n / 2; gz < lv.target.y + n / 2; gz++) for (let gx = lv.target.x - n / 2; gx < lv.target.x + n / 2; gx++) {
-      const t = (((gz % n) + n) % n) * n + (((gx % n) + n) % n);
-      if (lv.gx[t] !== gx || lv.gz[t] !== gz) return true;
-    }
-    return false;
+    return out;
   }
 
   private settle(lv: Level) {
@@ -376,36 +403,28 @@ export class TerrainClipmap {
     lv.ready = true;
   }
 
-  private computeBlock(lv: Level, bx: number, bz: number) {
-    const n = CLIP_N;
-    this.field.fillBlock(bx * B, bz * B, B, B, lv.sp, this.blockH, this.blockM);
-    for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) {
-      const gx = bx * B + i, gz = bz * B + j;
-      if (!this.inTarget(lv, gx, gz)) continue;
-      const t = (((gz % n) + n) % n) * n + (((gx % n) + n) % n);
-      const o = j * B + i;
+  private computeBlock(lv: Level, b: Blk) {
+    const n = CLIP_N, mask = n - 1;
+    const nx = b.x1 - b.x0 + 1, nz = b.z1 - b.z0 + 1;
+    this.field.fillBlock(b.x0, b.z0, nx, nz, lv.sp, this.blockH, this.blockM);
+    const M = this.blockM;
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+      const gx = b.x0 + i, gz = b.z0 + j;
+      const t = (gz & mask) * n + (gx & mask);
+      const o = j * nx + i, s8 = o * 8, t4 = t * 4;
       lv.h[t] = this.blockH[o];
-      lv.m.set(this.blockM.subarray(o * 8, o * 8 + 8), t * 8);
+      lv.ma[t4] = M[s8]; lv.ma[t4 + 1] = M[s8 + 1]; lv.ma[t4 + 2] = M[s8 + 2]; lv.ma[t4 + 3] = M[s8 + 3];
+      lv.mb[t4] = M[s8 + 4]; lv.mb[t4 + 1] = M[s8 + 5]; lv.mb[t4 + 2] = M[s8 + 6]; lv.mb[t4 + 3] = M[s8 + 7];
       lv.gx[t] = gx; lv.gz[t] = gz;
     }
     lv.changed = true;
   }
 
+  /** Texel data is written straight into the textures; only the changed layers go up. */
   private upload() {
-    const n = CLIP_N;
-    const H = this.heightTex.image.data as Float32Array;
-    const M = this.matTex.image.data as Uint8Array;
     for (const lv of this.levels) {
       if (!lv.changed) continue;
       lv.changed = false;
-      H.set(lv.h, lv.l * n * n);
-      // de-interleave 8 bytes per texel into two RGBA layers
-      const a = lv.l * 2 * n * n * 4, b = a + n * n * 4;
-      for (let t = 0; t < n * n; t++) {
-        const s = t * 8, o = t * 4;
-        M[a + o] = lv.m[s]; M[a + o + 1] = lv.m[s + 1]; M[a + o + 2] = lv.m[s + 2]; M[a + o + 3] = lv.m[s + 3];
-        M[b + o] = lv.m[s + 4]; M[b + o + 1] = lv.m[s + 5]; M[b + o + 2] = lv.m[s + 6]; M[b + o + 3] = lv.m[s + 7];
-      }
       this.heightTex.addLayerUpdate(lv.l);
       this.heightTex.needsUpdate = true;
       this.matTex.addLayerUpdate(lv.l * 2);

@@ -2,7 +2,7 @@ import { DataArrayTexture, Group, Mesh, ShaderMaterial } from 'three';
 import { Path } from '../road/path';
 import { RoadSurface } from '../road/surface';
 import { RoadGenerator } from '../road/generator';
-import { WEAR_CHUNK, rasterWear } from '../road/wear';
+import { WEAR_CHUNK, rasterWearColumns } from '../road/wear';
 import { CrossSection } from '../road/types';
 import { buildRoadChunk, WearTileRef } from './roadMesh';
 
@@ -39,7 +39,8 @@ export interface Chunk {
 }
 
 /** A small piece of world-building work tied to a chunk (run in order, inside the frame budget). */
-export interface ChunkJob { c: Chunk; run(): void; label: string }
+/** run() may return follow-up jobs, which go straight after it in the queue. */
+export interface ChunkJob { c: Chunk; run(): void | ChunkJob[]; label: string }
 
 export interface ChunkHooks {
   /** the jobs that build everything beside a freshly built road chunk */
@@ -66,11 +67,18 @@ export class ChunkManager {
   chunks = new Map<string, Chunk>();
   root = new Group();
   private freeLayers: number[] = [];
-  private tileBuf: Uint8Array;
   originX = 0;
   originZ = 0;
-  stats = { built: 0, dropped: 0, buildMs: 0, maxBuildMs: 0, wearMs: 0, jobs: 0, maxJobMs: 0, maxJob: '', pendingJobs: 0 };
+  stats = { built: 0, dropped: 0, buildMs: 0, maxBuildMs: 0, wearMs: 0, jobs: 0, maxJobMs: 0, maxJob: '', pendingJobs: 0, prepMs: 0, maxPrepMs: 0, frameMaxJobMs: 0, frameMaxJob: '' };
+  /** Time per kind of work (label → count, total ms, max ms), for the perf tools. */
+  timing: Record<string, { n: number; ms: number; max: number }> = {};
+  private time(label: string, ms: number) {
+    const t = this.timing[label] ?? (this.timing[label] = { n: 0, ms: 0, max: 0 });
+    t.n++; t.ms += ms; if (ms > t.max) t.max = ms;
+  }
   private jobs: ChunkJob[] = [];
+  /** wear tiles being rasterised, a band of columns at a time */
+  private wearTasks: { c: Chunk; layer: number; x: number }[] = [];
 
   constructor(
     public gen: RoadGenerator,
@@ -83,7 +91,6 @@ export class ChunkManager {
   ) {
     this.root.name = 'chunks';
     for (let i = opt.wearLayers - 1; i >= 1; i--) this.freeLayers.push(i);
-    this.tileBuf = new Uint8Array(opt.wearW * opt.wearH * 4);
   }
 
   /** Final arc length a path can be built to (profile fixed, before its fork). */
@@ -119,10 +126,20 @@ export class ChunkManager {
     // wear tiles: release far ones, assign near ones (nearest first)
     for (const c of this.chunks.values()) if (c.wearLayer > 0 && c.dist > this.opt.wearRadius + 60) this.releaseWear(c);
     const todo = [...want.entries()].filter(([k]) => !this.chunks.has(k)).sort((a, b) => a[1].d - b[1].d);
-    const nearNoWear = [...this.chunks.values()].filter((c) => c.wearLayer === 0 && c.dist < this.opt.wearRadius).sort((a, b) => a.dist - b.dist);
+    // start tiles for the nearest chunks without one (at most two in flight), then rasterise
+    // bands of columns: a whole tile is too much for one frame
+    const nearNoWear = [...this.chunks.values()].filter((c) => c.wearLayer === 0 && c.dist < this.opt.wearRadius && !this.wearTasks.some((w) => w.c === c)).sort((a, b) => a.dist - b.dist);
+    let started = 0;
     for (const c of nearNoWear) {
-      if (now() - t0 > budgetMs) break;
-      this.assignWear(c);
+      if (this.wearTasks.length >= 2 || !this.freeLayers.length) break;
+      this.wearTasks.push({ c, layer: this.freeLayers.pop()!, x: 0 });
+      started++;
+    }
+    const wearWaiting = this.freeLayers.length ? nearNoWear.length - started : 0;
+    while (this.wearTasks.length && now() - t0 <= budgetMs) {
+      const tw = now();
+      this.wearBand(this.wearTasks[0]);
+      this.time('wear', now() - tw);
     }
     // chunks that came near and want more detail
     if (this.hooks.upgrade) {
@@ -132,7 +149,11 @@ export class ChunkManager {
     // one queue: road builds and roadside jobs, nearest chunk first (jobs of a chunk keep order)
     this.jobs = this.jobs.filter((j) => j.c.alive);
     this.jobs.sort((a, b) => a.c.dist - b.c.dist);
+    this.stats.prepMs = now() - t0;
+    this.time('prep', this.stats.prepMs);
+    this.stats.maxPrepMs = Math.max(this.stats.maxPrepMs, this.stats.prepMs);
     let ti = 0, ji = 0;
+    this.stats.frameMaxJobMs = 0;
     while (now() - t0 <= budgetMs) {
       const nb = ti < todo.length ? todo[ti][1].d : Infinity;
       const nj = ji < this.jobs.length ? this.jobs[ji].c.dist + 1 : Infinity;
@@ -141,20 +162,26 @@ export class ChunkManager {
       if (nb <= nj) {
         const [key, w] = todo[ti++];
         this.build(key, w.p, w.ci, w.d);
-        this.stats.maxBuildMs = Math.max(this.stats.maxBuildMs, now() - tb);
+        const dt = now() - tb;
+        this.stats.maxBuildMs = Math.max(this.stats.maxBuildMs, dt);
+        this.time('road', dt);
+        if (dt > this.stats.frameMaxJobMs) { this.stats.frameMaxJobMs = dt; this.stats.frameMaxJob = 'road'; }
       } else {
         const j = this.jobs[ji++];
         if (!j.c.alive) continue;
-        j.run();
+        const more = j.run();
+        if (more && more.length) this.jobs.splice(ji, 0, ...more);
         const dt = now() - tb;
         this.stats.jobs++;
+        this.time(j.label, dt);
+        if (dt > this.stats.frameMaxJobMs) { this.stats.frameMaxJobMs = dt; this.stats.frameMaxJob = j.label; }
         if (dt > this.stats.maxJobMs) { this.stats.maxJobMs = dt; this.stats.maxJob = j.label; }
       }
     }
     this.jobs.splice(0, ji);
     this.stats.pendingJobs = this.jobs.length;
     this.stats.buildMs = now() - t0;
-    return todo.length - ti + this.jobs.length;
+    return todo.length - ti + this.jobs.length + this.wearTasks.length + wearWaiting;
   }
 
   private build(key: string, p: Path, ci: number, d: number) {
@@ -178,7 +205,6 @@ export class ChunkManager {
     group.updateMatrixWorld(true);
     this.root.add(group);
     this.chunks.set(key, c);
-    if (d < this.opt.wearRadius) this.assignWear(c);
     if (this.hooks.roadside) this.jobs.push(...this.hooks.roadside(c));
     this.stats.built++;
   }
@@ -199,21 +225,38 @@ export class ChunkManager {
     return { layer, s0: c.s0, tMin: c.tMin, pxS: this.opt.wearPx, pxT: this.opt.wearH / width, W: this.opt.wearW, H: this.opt.wearH };
   }
 
-  private assignWear(c: Chunk) {
-    const layer = this.freeLayers.pop();
-    if (layer === undefined || !c.road) return;
+  /**
+   * A band of a wear tile: 16 columns at a time until ~1.5 ms is spent; the last band uploads
+   * the layer and hands it to the chunk.
+   */
+  private wearBand(w: { c: Chunk; layer: number; x: number }) {
     const tb = performance.now();
-    const ref = this.tileRef(c, layer);
-    rasterWear(this.surface.wear, c.path, c.s0, c.tMin, ref.pxS, ref.pxT, ref.W, ref.H, this.tileBuf);
+    const c = w.c;
+    const ref = this.tileRef(c, w.layer);
     const img = this.wearTex.image as { data: Uint8Array; width: number; height: number };
-    img.data.set(this.tileBuf, layer * ref.W * ref.H * 4);
-    this.wearTex.addLayerUpdate(layer);
-    this.wearTex.needsUpdate = true;
-    this.setLayer(c, layer);
+    const view = img.data.subarray(w.layer * ref.W * ref.H * 4, (w.layer + 1) * ref.W * ref.H * 4);
+    while (w.x < ref.W && performance.now() - tb < 1.5) {
+      const x1 = Math.min(ref.W, w.x + 16);
+      rasterWearColumns(this.surface.wear, c.path, c.s0, c.tMin, ref.pxS, ref.pxT, ref.W, ref.H, view, w.x, x1);
+      w.x = x1;
+    }
+    if (w.x >= ref.W) {
+      this.wearTasks.shift();
+      this.wearTex.addLayerUpdate(w.layer);
+      this.wearTex.needsUpdate = true;
+      this.setLayer(c, w.layer);
+    }
     this.stats.wearMs += performance.now() - tb;
   }
 
+  /** Stop a tile in progress for this chunk (its layer goes back to the pool). */
+  private cancelWear(c: Chunk) {
+    const i = this.wearTasks.findIndex((w) => w.c === c);
+    if (i >= 0) { this.freeLayers.push(this.wearTasks[i].layer); this.wearTasks.splice(i, 1); }
+  }
+
   private releaseWear(c: Chunk) {
+    this.cancelWear(c);
     if (c.wearLayer > 0) this.freeLayers.push(c.wearLayer);
     this.setLayer(c, 0);
   }
@@ -228,6 +271,7 @@ export class ChunkManager {
 
   private drop(c: Chunk) {
     c.alive = false;
+    this.cancelWear(c);
     if (c.wearLayer > 0) this.freeLayers.push(c.wearLayer);
     c.road?.geometry.dispose();
     for (const part of c.parts) part.dispose();

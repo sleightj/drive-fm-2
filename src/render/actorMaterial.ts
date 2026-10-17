@@ -298,41 +298,46 @@ export function addSmoothNormals(g: BufferGeometry): void {
   const pos = g.getAttribute('position');
   const idx = g.getIndex();
   const n = pos.count;
-  const keyOf = (i: number) =>
-    `${Math.round(pos.getX(i) * 1e4)},${Math.round(pos.getY(i) * 1e4)},${Math.round(pos.getZ(i) * 1e4)}`;
-  const groups = new Map<string, number>();
+  // weld vertices at the same position (to 0.1 mm) with an open-addressing hash on the
+  // quantised coordinates: no strings, no per-vertex allocation
+  const q = new Int32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    q[i * 3] = Math.round(pos.getX(i) * 1e4);
+    q[i * 3 + 1] = Math.round(pos.getY(i) * 1e4);
+    q[i * 3 + 2] = Math.round(pos.getZ(i) * 1e4);
+  }
+  let size = 1;
+  while (size < n * 2) size <<= 1;
+  const mask = size - 1;
+  const slotRep = new Int32Array(size).fill(-1); // a representative vertex per slot
+  const slotId = new Int32Array(size);
   const gid = new Int32Array(n);
   let next = 0;
   for (let i = 0; i < n; i++) {
-    const k = keyOf(i);
-    let id = groups.get(k);
-    if (id === undefined) {
-      id = next++;
-      groups.set(k, id);
+    const x = q[i * 3], y = q[i * 3 + 1], z = q[i * 3 + 2];
+    let h = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(z, 83492791)) & mask;
+    for (;;) {
+      const r = slotRep[h];
+      if (r < 0) { slotRep[h] = i; slotId[h] = next; gid[i] = next++; break; }
+      if (q[r * 3] === x && q[r * 3 + 1] === y && q[r * 3 + 2] === z) { gid[i] = slotId[h]; break; }
+      h = (h + 1) & mask;
     }
-    gid[i] = id;
   }
   const acc = new Float32Array(next * 3);
   const tri = idx ? idx.count / 3 : n / 3;
-  const ax = [0, 0, 0], bx = [0, 0, 0], cx = [0, 0, 0];
   for (let t = 0; t < tri; t++) {
     const a = idx ? idx.getX(t * 3) : t * 3;
     const b = idx ? idx.getX(t * 3 + 1) : t * 3 + 1;
     const c = idx ? idx.getX(t * 3 + 2) : t * 3 + 2;
-    ax[0] = pos.getX(a); ax[1] = pos.getY(a); ax[2] = pos.getZ(a);
-    bx[0] = pos.getX(b); bx[1] = pos.getY(b); bx[2] = pos.getZ(b);
-    cx[0] = pos.getX(c); cx[1] = pos.getY(c); cx[2] = pos.getZ(c);
-    const e1x = bx[0] - ax[0], e1y = bx[1] - ax[1], e1z = bx[2] - ax[2];
-    const e2x = cx[0] - ax[0], e2y = cx[1] - ax[1], e2z = cx[2] - ax[2];
+    const ax = pos.getX(a), ay = pos.getY(a), az = pos.getZ(a);
+    const e1x = pos.getX(b) - ax, e1y = pos.getY(b) - ay, e1z = pos.getZ(b) - az;
+    const e2x = pos.getX(c) - ax, e2y = pos.getY(c) - ay, e2z = pos.getZ(c) - az;
     const nx = e1y * e2z - e1z * e2y;
     const ny = e1z * e2x - e1x * e2z;
     const nz = e1x * e2y - e1y * e2x;
-    for (const v of [a, b, c]) {
-      const id = gid[v] * 3;
-      acc[id] += nx;
-      acc[id + 1] += ny;
-      acc[id + 2] += nz;
-    }
+    let id = gid[a] * 3; acc[id] += nx; acc[id + 1] += ny; acc[id + 2] += nz;
+    id = gid[b] * 3; acc[id] += nx; acc[id + 1] += ny; acc[id + 2] += nz;
+    id = gid[c] * 3; acc[id] += nx; acc[id + 1] += ny; acc[id + 2] += nz;
   }
   const out = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) {

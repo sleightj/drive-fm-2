@@ -30,6 +30,7 @@ const game = new Game(app, {
   autopilot: q.has('auto'),
   simRate: num('rate', 1),
   freezeTime: q.has('freeze'),
+  fixedStep: q.has('fixed'),
 });
 
 const api = {
@@ -58,6 +59,10 @@ const api = {
   },
   setHour(h: number | string) { game.setHour(h); },
   start() { if (game.state === 'title') game.setState('driving'); },
+  /** Start recording per-frame samples, or take (and clear) what was recorded. */
+  record(on: boolean) { game.rec = on ? [] : null; },
+  takeFrames() { const r = game.rec ?? []; if (game.rec) game.rec = []; return r; },
+  timing() { return { chunks: game.chunks?.timing, stats: game.chunks?.stats }; },
 };
 (window as any).__DRIVE_FM__ = api;
 

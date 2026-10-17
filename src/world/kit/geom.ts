@@ -316,6 +316,12 @@ export class WorldGeom {
     return g;
   }
 
+  /** Trim the buffers to their contents (for geometry kept around, e.g. cached props). */
+  compact() {
+    for (const b of [this.pos, this.nor, this.uvl, this.col, this.grad, this.light]) b.a = b.a.slice(0, Math.max(1, b.n));
+    return this;
+  }
+
   reset() {
     this.pos.reset(); this.nor.reset(); this.uvl.reset(); this.col.reset(); this.grad.reset(); this.light.reset();
     this.m.identity();
@@ -380,13 +386,25 @@ export class InkedGeom {
     }
   }
   append(o: InkedGeom, mat: Matrix4) {
-    const save = this.m.clone();
-    this.m.multiply(mat);
     const n = o.vertexCount;
+    if (!n) return;
+    const e = new Matrix4().multiplyMatrices(this.m, mat).elements;
+    const p = o.pos.a, nr = o.nor.a;
+    this.pos.ensure(n * 3); this.nor.ensure(n * 3); this.slot.ensure(n);
+    const P = this.pos.a, N = this.nor.a;
+    let pi = this.pos.n, ni = this.nor.n;
     for (let i = 0; i < n; i++) {
-      this.vert(o.pos.a[i * 3], o.pos.a[i * 3 + 1], o.pos.a[i * 3 + 2], o.nor.a[i * 3], o.nor.a[i * 3 + 1], o.nor.a[i * 3 + 2], o.slot.a[i]);
+      const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+      P[pi++] = e[0] * x + e[4] * y + e[8] * z + e[12];
+      P[pi++] = e[1] * x + e[5] * y + e[9] * z + e[13];
+      P[pi++] = e[2] * x + e[6] * y + e[10] * z + e[14];
+      const nx = nr[i * 3], ny = nr[i * 3 + 1], nz = nr[i * 3 + 2];
+      const ax = e[0] * nx + e[4] * ny + e[8] * nz, ay = e[1] * nx + e[5] * ny + e[9] * nz, az = e[2] * nx + e[6] * ny + e[10] * nz;
+      const l = Math.hypot(ax, ay, az) || 1;
+      N[ni++] = ax / l; N[ni++] = ay / l; N[ni++] = az / l;
     }
-    this.m.copy(save);
+    this.pos.n = pi; this.nor.n = ni;
+    this.slot.a.set(o.slot.a.subarray(0, n), this.slot.n); this.slot.n += n;
   }
   toGeometry(): BufferGeometry {
     const g = new BufferGeometry();
@@ -395,6 +413,10 @@ export class InkedGeom {
     g.setAttribute('slot', new BufferAttribute(this.slot.view(), 1));
     g.setAttribute('uv', new BufferAttribute(new Float32Array(this.vertexCount * 2), 2));
     return g;
+  }
+  compact() {
+    for (const b of [this.pos, this.nor, this.slot]) b.a = b.a.slice(0, Math.max(1, b.n));
+    return this;
   }
   reset() {
     this.pos.reset(); this.nor.reset(); this.slot.reset(); this.m.identity();

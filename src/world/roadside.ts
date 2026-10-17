@@ -58,7 +58,7 @@ export interface RoadsideDeps {
   detail: number;
 }
 
-export interface Job { c: Chunk; run(): void; label: string }
+export interface Job { c: Chunk; run(): void | Job[]; label: string }
 
 type RunKind = 'build' | 'trees' | 'carpark' | 'lot' | 'wall' | 'open' | 'yard';
 interface Run { s0: number; s1: number; kind: RunKind; mood: Mood; seed: number }
@@ -108,6 +108,8 @@ interface Placed { type: string; x: number; y: number; z: number; yaw: number; s
 interface EdgeRun { type: EdgeType; pts: EdgePoint[]; seed: number }
 interface Decal { name: string; s: number; t: number; dir: 1 | -1; scaleW?: number; scaleL?: number }
 interface Wire { a: Anchor; b: Anchor; sag: number }
+
+interface PropEntry { world: WorldGeom; inked: InkedGeom; lights: Light[]; anchors: Anchor[] }
 
 interface Plan {
   rows: Row[];
@@ -170,7 +172,8 @@ function dominant(w: number[]): Mood {
 export class Roadside {
   private state = new Map<string, State>();
   private runs = new Map<string, Run[]>();
-  private lightCache = new Map<string, { lights: Light[]; anchors: Anchor[] }>();
+  /** Prop geometry by type and variant (8 per type), built once in the prop's own frame. */
+  private propCache = new Map<string, PropEntry>();
   stats = { plots: 0, rejected: 0, jobs: 0, worldTris: 0, inkTris: 0, lastJobMs: 0, maxJobMs: 0, maxJob: '' };
 
   constructor(public d: RoadsideDeps) {}
@@ -220,15 +223,19 @@ export class Roadside {
       this.structure(c, st.plan!, st.building.world);
     } });
     jobs.push({ c, label: 'plots', run: () => {
-      // far buildings are cheap: all at once; near ones one per job (queued below)
-      if (lod === 1) for (const p of st.plan!.plots) this.buildPlot(c, p, st, 1);
+      // far buildings are cheap: all at once; near ones one per job (a building can take a few ms)
+      if (lod === 1) { for (const p of st.plan!.plots) this.buildPlot(c, p, st, 1); return; }
+      return st.plan!.plots.map((p) => ({ c, label: 'plot', run: () => this.buildPlot(c, p, st, 0) }));
     } });
-    if (lod === 0) {
-      // one job per detailed plot (a building can take a few ms)
-      const n = 24; // upper bound; jobs past the plot count do nothing
-      for (let i = 0; i < n; i++) jobs.push({ c, label: 'plot', run: () => { const p = st.plan!.plots[i]; if (p) this.buildPlot(c, p, st, 0); } });
-    }
-    jobs.push({ c, label: 'furniture', run: () => this.furniture(c, st, lod) });
+    jobs.push({ c, label: 'furniture', run: () => {
+      // props in small batches, then edges, then wires, the guide sign and road marks
+      const props = st.plan!.props.filter((pr) => lod === 0 || pr.ink || pr.type.startsWith('tree')); // far: lamps, poles, signs, trees
+      const more: Job[] = [{ c, label: 'props', run: () => this.placeProps(c, st, props, 0) }];
+      more.push({ c, label: 'edges', run: () => this.edges(c, st, 0) });
+      more.push({ c, label: 'extras', run: () => this.extras(c, st, lod) });
+      return more;
+    } });
+    jobs.push({ c, label: 'light', run: () => this.light(c, st) });
     jobs.push({ c, label: 'finish', run: () => this.finish(c, st) });
     return jobs;
   }
@@ -694,19 +701,21 @@ export class Roadside {
   }
 
   private anchors(type: string, seed: number): Anchor[] {
-    return this.propInfo(type, seed).anchors;
+    return this.prop(type, seed).anchors;
   }
 
-  private propInfo(type: string, seed: number): { lights: Light[]; anchors: Anchor[] } {
-    const key = `${type}:${seed % 8}`;
-    let v = this.lightCache.get(key);
-    if (!v) {
+  /** A prop's geometry, lights and wire anchors (cached per type and variant). */
+  private prop(type: string, seed: number): PropEntry {
+    const v = seed & 7;
+    const key = `${type}:${v}`;
+    let e = this.propCache.get(key);
+    if (!e) {
       const w = new WorldGeom(), ik = new InkedGeom();
-      const r = buildProp(w, ik, this.d.tex.L, type, seed % 8);
-      v = { lights: r.lights, anchors: r.wireAnchors ?? [] };
-      this.lightCache.set(key, v);
+      const r = buildProp(w, ik, this.d.tex.L, type, v);
+      e = { world: w.compact(), inked: ik.compact(), lights: r.lights, anchors: r.wireAnchors ?? [] };
+      this.propCache.set(key, e);
     }
-    return v;
+    return e;
   }
 
   /** Road text and marks for this chunk. */
@@ -882,26 +891,46 @@ export class Roadside {
     w.m.copy(save); ik.m.copy(saveI);
   }
 
-  private furniture(c: Chunk, st: State, lod: 0 | 1) {
+  /** Props from index `from` on, until ~2 ms is spent (the rest follows as another job). */
+  private placeProps(c: Chunk, st: State, props: Placed[], from: number): Job[] | void {
+    const B = st.building!;
+    const m = new Matrix4(), v = new Vector3();
+    const t0 = performance.now();
+    let i = from;
+    while (i < props.length) {
+      const pr = props[i++];
+      m.makeRotationY(pr.yaw).setPosition(pr.x, pr.y, pr.z);
+      const e = this.prop(pr.type, pr.seed);
+      B.world.append(e.world, m);
+      B.inked.append(e.inked, m);
+      for (const l of e.lights) { v.set(l.x, l.y, l.z).applyMatrix4(m); B.lights.push({ ...l, x: v.x, y: v.y, z: v.z }); }
+      if (performance.now() - t0 > 2) break;
+    }
+    if (i < props.length) return [{ c, label: 'props', run: () => this.placeProps(c, st, props, i) }];
+  }
+
+  /** Edge runs from index `from` on, until ~2 ms is spent (the rest follows as another job). */
+  private edges(c: Chunk, st: State, from: number): Job[] | void {
+    const B = st.building!, L = this.d.tex.L, edges = st.plan!.edges;
+    const t0 = performance.now();
+    let i = from;
+    while (i < edges.length) {
+      const e = edges[i++];
+      B.lights.push(...buildEdge(B.world, B.inked, L, e.type, e.pts, e.seed).lights);
+      if (performance.now() - t0 > 2) break;
+    }
+    if (i < edges.length) return [{ c, label: 'edges', run: () => this.edges(c, st, i) }];
+  }
+
+  private extras(c: Chunk, st: State, lod: 0 | 1) {
     const B = st.building!, plan = st.plan!;
     const w = B.world, ik = B.inked, L = this.d.tex.L;
-    const place = (x: number, y: number, z: number, yaw: number) => new Matrix4().makeRotationY(yaw).setPosition(x, y, z);
-    for (const pr of plan.props) {
-      if (lod === 1 && !pr.ink && !pr.type.startsWith('tree')) continue; // far: lamps, poles, signs, trees only
-      const m = place(pr.x, pr.y, pr.z, pr.yaw);
-      const sw = w.m.clone(), si = ik.m.clone();
-      w.m.copy(m); ik.m.copy(m);
-      const r = buildProp(w, ik, L, pr.type, pr.seed);
-      w.m.copy(sw); ik.m.copy(si);
-      for (const l of r.lights) { const v = new Vector3(l.x, l.y, l.z).applyMatrix4(m); B.lights.push({ ...l, x: v.x, y: v.y, z: v.z }); }
-    }
-    for (const e of plan.edges) B.lights.push(...buildEdge(w, ik, L, e.type, e.pts, e.seed).lights);
     if (lod === 0) for (const wi of plan.wires) buildWires(w, wi.a, wi.b, wi.sag);
     if (plan.guide) {
       const p = c.path;
       p.pointAt(plan.guide.s, _pt);
       const y = this.d.surface.baseHeight(p, plan.guide.s, 0);
-      const m = place(_pt.x - c.ox, y, _pt.z - c.oz, _pt.h + Math.PI);
+      const m = new Matrix4().makeRotationY(_pt.h + Math.PI).setPosition(_pt.x - c.ox, y, _pt.z - c.oz);
       const sw = w.m.clone(), si = ik.m.clone();
       w.m.copy(m); ik.m.copy(m);
       const r = buildGuideSign(w, ik, L, { left: plan.guide.left, right: plan.guide.right, span: plan.guide.span });
@@ -964,12 +993,24 @@ export class Roadside {
     }
   }
 
+  /** Bake night light into the roadside and the road (in batches of lights). */
+  private light(c: Chunk, st: State): Job[] {
+    const B = st.building!;
+    const jobs: Job[] = [];
+    let wl: LightBaker | null = null, dl: LightBaker | null = null;
+    for (let i = 0; i < B.lights.length; i += 10) {
+      const batch = B.lights.slice(i, i + 10);
+      jobs.push({ c, label: 'light', run: () => {
+        wl ??= worldBaker(B.world); dl ??= worldBaker(B.decal);
+        wl(batch); dl(batch);
+      } });
+    }
+    jobs.push({ c, label: 'light', run: () => { if (c.road) bakeRoadLights(c.road, B.lights); } });
+    return jobs;
+  }
+
   private finish(c: Chunk, st: State) {
     const B = st.building!;
-    // bake night light into the roadside and the road
-    bakeLights(B.world, B.lights);
-    bakeLights(B.decal, B.lights);
-    if (c.road) bakeRoadLights(c.road, B.lights);
     const meshes: Mesh[] = [];
     if (B.world.vertexCount) {
       const m = new Mesh(B.world.toGeometry(), this.d.mats.world);
@@ -1033,23 +1074,67 @@ function quadUp(w: WorldGeom, p0: Vector3, p1: Vector3, p2: Vector3, p3: Vector3
   else w.quadUV(p1, p0, p3, p2, [uv[2], uv[3], uv[0], uv[1], uv[6], uv[7], uv[4], uv[5]], mat, -1, -1);
 }
 
-/** Bakes lamp light into the aLight rgb of world vertices (soft falloff, facing term). */
+/**
+ * Bakes lamp light into the aLight rgb of world vertices (soft falloff, facing term). Vertices
+ * are bucketed on a coarse x/z grid so each light only visits the vertices within its reach.
+ */
 export function bakeLights(w: WorldGeom, lights: Light[]) {
-  if (!lights.length) return;
-  const n = w.vertexCount, P = w.pos.a, N = w.nor.a, A = w.light.a;
-  for (const l of lights) {
+  if (lights.length && w.vertexCount) worldBaker(w)(lights);
+}
+
+type LightBaker = (lights: Light[]) => void;
+
+/** A baker for one geometry: buckets its vertices once, then adds any number of lights. */
+function worldBaker(w: WorldGeom): LightBaker {
+  const n = w.vertexCount;
+  if (!n) return () => {};
+  const P = w.pos.a, N = w.nor.a, A = w.light.a;
+  const grid = bucket(P, n, 3);
+  return (lights) => { for (const l of lights) {
     const r = l.radius, r2 = r * r;
-    for (let i = 0; i < n; i++) {
+    grid.visit(l.x - r, l.z - r, l.x + r, l.z + r, (i) => {
       const dx = l.x - P[i * 3], dy = l.y - P[i * 3 + 1], dz = l.z - P[i * 3 + 2];
       const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 >= r2) continue;
+      if (d2 >= r2) return;
       const d = Math.sqrt(d2) || 1e-3;
       const q = 1 - d2 / r2;
       const facing = Math.max(0.15, (N[i * 3] * dx + N[i * 3 + 1] * dy + N[i * 3 + 2] * dz) / d * 0.7 + 0.3);
       const k = q * q * facing;
       A[i * 4] += l.r * k; A[i * 4 + 1] += l.g * k; A[i * 4 + 2] += l.b * k;
-    }
+    });
+  } };
+}
+
+/** Vertex indices bucketed on an 8 m x/z grid (counting sort; no per-vertex allocation). */
+function bucket(P: ArrayLike<number>, n: number, stride: number) {
+  const CS = 8;
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = P[i * stride], z = P[i * stride + 2];
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z;
   }
+  const nx = Math.max(1, Math.ceil((x1 - x0) / CS) + 1), nz = Math.max(1, Math.ceil((z1 - z0) / CS) + 1);
+  const start = new Int32Array(nx * nz + 1);
+  const cellOf = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const c = Math.floor((P[i * stride] - x0) / CS) + Math.floor((P[i * stride + 2] - z0) / CS) * nx;
+    cellOf[i] = c;
+    start[c + 1]++;
+  }
+  for (let c = 0; c < nx * nz; c++) start[c + 1] += start[c];
+  const fill = start.slice(0, nx * nz);
+  const idx = new Int32Array(n);
+  for (let i = 0; i < n; i++) idx[fill[cellOf[i]]++] = i;
+  return {
+    visit(ax: number, az: number, bx: number, bz: number, f: (i: number) => void) {
+      const ca = Math.max(0, Math.floor((ax - x0) / CS)), cb = Math.min(nx - 1, Math.floor((bx - x0) / CS));
+      const ra = Math.max(0, Math.floor((az - z0) / CS)), rb = Math.min(nz - 1, Math.floor((bz - z0) / CS));
+      for (let r = ra; r <= rb; r++) for (let c = ca; c <= cb; c++) {
+        const k = r * nx + c;
+        for (let j = start[k]; j < start[k + 1]; j++) f(idx[j]);
+      }
+    },
+  };
 }
 
 /** Same light into the road mesh's aLamp attribute (lamp pools on the asphalt). */
@@ -1061,15 +1146,19 @@ export function bakeRoadLights(road: Mesh, lights: Light[]) {
   if (!a) { a = new BufferAttribute(new Float32Array(n * 3), 3); g.setAttribute('aLamp', a); }
   const A = a.array as Float32Array;
   A.fill(0);
-  for (const l of lights) {
-    const r2 = l.radius * l.radius;
-    for (let i = 0; i < n; i++) {
-      const dx = l.x - pos.getX(i), dy = l.y - pos.getY(i), dz = l.z - pos.getZ(i);
-      const d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 >= r2) continue;
-      const q = 1 - d2 / r2;
-      const k = q * q * Math.min(1, Math.max(0.2, dy / Math.sqrt(d2 + 1e-6)));
-      A[i * 3] += l.r * k; A[i * 3 + 1] += l.g * k; A[i * 3 + 2] += l.b * k;
+  const P = pos.array as Float32Array, st = (pos as BufferAttribute).itemSize;
+  if (n && lights.length) {
+    const grid = bucket(P, n, st);
+    for (const l of lights) {
+      const r2 = l.radius * l.radius;
+      grid.visit(l.x - l.radius, l.z - l.radius, l.x + l.radius, l.z + l.radius, (i) => {
+        const dx = l.x - P[i * st], dy = l.y - P[i * st + 1], dz = l.z - P[i * st + 2];
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= r2) return;
+        const q = 1 - d2 / r2;
+        const k = q * q * Math.min(1, Math.max(0.2, dy / Math.sqrt(d2 + 1e-6)));
+        A[i * 3] += l.r * k; A[i * 3 + 1] += l.g * k; A[i * 3 + 2] += l.b * k;
+      });
     }
   }
   a.needsUpdate = true;

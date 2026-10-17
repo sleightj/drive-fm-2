@@ -470,12 +470,14 @@ export class RoadGenerator {
   // ---------------------------------------------------------------- generation -----------
 
   /** Extend `p` until its plan reaches `sTarget` (forks spawn children; they are extended separately). */
-  extend(p: Path, sTarget: number) {
+  /** Plan pieces until the path reaches sTarget (or `deadline` passes: at least one piece per call). */
+  extend(p: Path, sTarget: number, deadline = Infinity) {
     const st = p.gen as GenState;
     if (!st || st.stopped) return;
     let guard = 0;
     while (p.length < sTarget && p.forkS === null && guard++ < 400) {
       this.step(p);
+      if (performance.now() > deadline) break;
     }
     this.extendProfile(p);
   }
