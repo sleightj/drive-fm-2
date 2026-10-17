@@ -76,3 +76,21 @@ export function fitText(g, text, cx, cy, maxW, size, font, opts = {}) {
   g.fillText(text, cx, cy);
   return s;
 }
+
+/**
+ * Stamps the emissive "kind" into alpha over a region (default: the whole layer), keeping the
+ * colour: 'window' → alpha 1 (random per-window lighting), 'always' → alpha 0.4 (always lit at
+ * night). Call after painting the emissive art; black areas stay non-emissive either way.
+ */
+export function emitKind(g, S, kind, x = 0, y = 0, w = S, h = S) {
+  const a = kind === 'window' ? 255 : 102;
+  const img = g.getImageData(x, y, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const k = d[i + 3] / 255;
+    // flatten onto black first so partially covered pixels keep their visible colour
+    d[i] = Math.round(d[i] * k); d[i + 1] = Math.round(d[i + 1] * k); d[i + 2] = Math.round(d[i + 2] * k);
+    d[i + 3] = a;
+  }
+  g.putImageData(img, x, y);
+}

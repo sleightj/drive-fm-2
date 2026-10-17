@@ -17,9 +17,10 @@ import { ENV_PARS, FOG_FN, HEADLIGHT_FN } from './glsl';
  *
  * Textures:
  *  - uAlbedo  sampler2DArray RGBA: painted colour, alpha = coverage (cutouts below 0.5)
- *  - uEmit    sampler2DArray RGBA: night emissive colour; alpha 1 = this emissive region is a
- *             window that is randomly lit or dark per window (one window per texture repeat),
- *             alpha 0 = always lit at night (neon, signs)
+ *  - uEmit    sampler2DArray RGBA: night emissive colour; alpha ≥ 0.9 = window region, lit or
+ *             dark at random per window (one window per texture repeat); alpha ≈ 0.4 = always
+ *             lit at night (neon, signs, lanterns). Painters stamp alpha over whole regions
+ *             (paintlib emitKind) so filtering never mixes the two kinds at a window's edge.
  */
 
 const WORLD_VERT = /* glsl */ `
@@ -102,15 +103,13 @@ void main() {
   // Night: baked lamp pools, the player's headlights, lit windows and neon.
   col += alb * vLight.rgb * uLampsOn;
   col += alb * headlight(vWP, N);
-  if (em.r + em.g + em.b > 0.01) {
-    float lit = 1.0;
-    if (em.a > 0.5) {
-      vec2 cell = floor(vUvl.xy + 1e-3);
-      float r = h21(cell + vec2(vLight.a * 91.7, vUvl.z * 13.1));
-      lit = step(r, uWindowsLit);
-      // a few windows in a different colour temperature
-      em.rgb = mix(em.rgb, em.rgb * vec3(0.7, 0.95, 1.25), step(0.82, h11(r * 77.0)));
-    }
+  if (em.r + em.g + em.b > 0.004) {
+    float w = smoothstep(0.6, 0.85, em.a);
+    vec2 cell = floor(vUvl.xy + 1e-3);
+    float r = h21(cell + vec2(vLight.a * 91.7, vUvl.z * 13.1));
+    float lit = mix(1.0, step(r, uWindowsLit), w);
+    // a few windows in a different colour temperature
+    em.rgb = mix(em.rgb, em.rgb * vec3(0.7, 0.95, 1.25), step(0.82, h11(r * 77.0)) * w);
     col += em.rgb * lit * uLampsOn * uEmitGain;
   }
 

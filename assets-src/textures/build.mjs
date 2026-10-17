@@ -11,6 +11,12 @@
  * a resolution-independent way using S). Layers are sorted by painter file name then order, so
  * indices are stable as long as painters only append. `rng` is a seeded random() per layer.
  *
+ * Emissive alpha convention (read by src/render/worldMaterial.ts): alpha >= 0.9 = a WINDOW
+ * region (lit or dark at random per window, one window per texture repeat); alpha ~0.4 =
+ * ALWAYS lit at night (neon, signs, shop interiors, lanterns); alpha 0 = no emission.
+ * Paint the emissive art at full alpha, then call emitKind(ctx, S, 'window' | 'always') from
+ * paintlib.mjs to stamp the alpha over the whole layer (or a region), so texture filtering
+ * at the edge of a window never mixes the two kinds.
  * Also exports helpers in ./paintlib.mjs (fonts, brushes, gradients).
  * Run: node assets-src/textures/build.mjs [--only name-substring] [--preview out.png]
  */
@@ -41,7 +47,7 @@ for (let k = 0; k < sheets; k++) {
   const A = createCanvas(S * GRID, S * GRID), Ag = A.getContext('2d');
   const M = createCanvas(E * GRID, E * GRID), Mg = M.getContext('2d');
   Ag.fillStyle = '#ff00ff'; Ag.fillRect(0, 0, A.width, A.height);
-  Mg.fillStyle = '#000'; Mg.fillRect(0, 0, M.width, M.height);
+  Mg.clearRect(0, 0, M.width, M.height);
   for (let i = 0; i < PER; i++) {
     const idx = k * PER + i;
     const l = all[idx];
