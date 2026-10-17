@@ -13,7 +13,7 @@ import { ENV_PARS, FOG_FN, HEADLIGHT_FN } from './glsl';
  *  - aGrad float 0 at the foot of a wall → 1 at its top (painted vertical gradient: darker and
  *               more saturated at the base); < 0 disables the gradient (ground-level surfaces)
  *  - aLight vec4 rgb = baked street-lamp light reaching this vertex at night,
- *               a = per-building random seed for which windows are lit
+ *               a = per-building window seed, an integer 0-63 (which windows are lit)
  *
  * Textures:
  *  - uAlbedo  sampler2DArray RGBA: painted colour, alpha = coverage (cutouts below 0.5)
@@ -69,7 +69,14 @@ varying vec3 vN;
 varying vec3 vWP;
 
 float h11(float n) { return fract(sin(n * 12.9898) * 43758.5453); }
-float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+// Integer hash (pcg3d): exact for integer inputs, so per-window decisions never flicker.
+float hash3u(ivec3 i) {
+  uvec3 v = uvec3(i) * 1664525u + 1013904223u;
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+  v ^= v >> 16u;
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y;
+  return float(v.x & 0xffffffu) / 16777216.0;
+}
 
 void main() {
   vec3 alb = vColor;
@@ -105,8 +112,12 @@ void main() {
   col += alb * headlight(vWP, N);
   if (em.r + em.g + em.b > 0.004) {
     float w = smoothstep(0.6, 0.85, em.a);
-    vec2 cell = floor(vUvl.xy + 1e-3);
-    float r = h21(cell + vec2(vLight.a * 91.7, vUvl.z * 13.1));
+    // window cell + building seed (integer 0-63 in aLight.a) + texture layer, all rounded:
+    // interpolated constants carry ulp jitter that a float hash would amplify into speckle
+    ivec2 cell = ivec2(floor(vUvl.xy + 1e-3));
+    int seedI = int(floor(vLight.a + 0.5));
+    int layerI = int(floor(vUvl.z + 0.5));
+    float r = hash3u(ivec3(cell, seedI * 64 + layerI));
     float lit = mix(1.0, step(r, uWindowsLit), w);
     // a few windows in a different colour temperature
     em.rgb = mix(em.rgb, em.rgb * vec3(0.7, 0.95, 1.25), step(0.82, h11(r * 77.0)) * w);

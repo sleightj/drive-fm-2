@@ -669,9 +669,11 @@ export class RoadGenerator {
       // lateral distance of right branch centre in left's frame (negative = to the right)
       const tl = dx * Math.cos(pa.h) - dz * Math.sin(pa.h);
       const tr = -dx * Math.cos(pb.h) + dz * Math.sin(pb.h);
-      midL[s] = tl / 2;
-      midR[s] = tr / 2;
       const kL = left.xsAt(s, xsA), kR = right.xsAt(s, xsB);
+      // the boundary is halfway across the gap between the two inner kerbs (each branch's surface
+      // reaches it, so together they cover the junction exactly once)
+      midL[s] = (kL.kerbR + tl + kR.kerbL) / 2;
+      midR[s] = (kR.kerbL + tr + kL.kerbR) / 2;
       // gap between the inner kerbs of the two branches
       const sep = Math.abs(tl) - Math.abs(kL.kerbR) - kR.kerbL;
       if (sep >= 1.5 && nose === n - 1) nose = s;
@@ -727,7 +729,8 @@ export class RoadGenerator {
       const intent = (zoneAt(s0 + D / 2)?.intent ?? z0?.intent ?? 'free') as Intent;
       // a branch's first segment continues the trunk's grade through the junction (no kink)
       const firstOfBranch = p.parent !== null && p.profile.vpis.length === 1;
-      if (firstOfBranch) D = Math.max(D, 150);
+      // (long enough that both branches share one surface through the gore, up to the nose)
+      if (firstOfBranch) D = Math.max(D, 245);
       // choose the new grade
       const zNow = st.zLast;
       if (Math.abs(zNow - st.zT) < 6 || rng.chance(0.05)) st.zT = zNow > 5 ? rng.range(-48, -8) : rng.range(15, 52);
