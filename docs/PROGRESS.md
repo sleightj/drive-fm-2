@@ -3,7 +3,7 @@
 Newest first. Each checkpoint is merged to `main`, which deploys https://sleightj.github.io/drive-fm-2/
 and proves the live link loads headless (`tools/verify-live.mjs` in the Pages workflow).
 
-## Checkpoint 2 — playable city drive (2026-10-17)
+## Checkpoint 3 — playable city drive (2026-10-17)
 
 ### Done
 - **Road**: endless seeded clothoid road with hard-turn events (hairpins, switchbacks, block
@@ -46,3 +46,12 @@ and proves the live link loads headless (`tools/verify-live.mjs` in the Pages wo
 ### Next
 - Integrate traffic, people and screen effects; long drives 100 km × 3 seeds in the real
   game; mood × time contact sheets; checkpoint 3.
+
+## Checkpoint 2 — road generator (2026-10-17)
+Road generator with hard turns, vertical profile, forks and streaming; Node road checks;
+Pages deploys from `main` only and never cancels a deploy in progress.
+
+## Checkpoint 1 — skeleton (2026-10-17)
+Vite + three.js + TypeScript project, cel shader core (actor toon + ink, painted world
+material, time-of-day palette), texture painting pipeline, asset and kit previewers, design
+doc, Pages workflow with headless verification of the live link.
