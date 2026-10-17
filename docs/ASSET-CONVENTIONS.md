@@ -80,3 +80,33 @@ Blender shading, baked lighting or PBR maps.
   `gear` per person from curated palettes, so model the *shapes* for variety and leave
   colour variety to the palettes (export sensible default colours anyway).
 - Triangle count 1,000–3,000 per variant, measured on the exported mesh.
+
+## The city kit (buildings, edges, props)
+
+Built in code (TypeScript, `src/world/kit/`), written through `WorldGeom` / `InkedGeom` in
+`src/world/kit/geom.ts`, shaded by `src/render/worldMaterial.ts` (unlined, painted) or, for the
+few inked hero props (lamp posts, sign gantries), by the actor material with the palette in
+`src/world/kit/propStyle.ts` plus an ink hull.
+
+- **Local frame of every kit piece:** metres, +Y up, origin on the ground at the piece's
+  front-centre, the street side facing **+Z**. Buildings occupy `x ∈ [-w/2, w/2]`,
+  `z ∈ [-depth, 0]` with the street facade on `z = 0`. Pieces must extend **down to y = -4**
+  (plinth/foundation in the same paint) so they never float on sloping ground.
+- **Textures:** painted at build time by painters in `assets-src/textures/painters/*.mjs`
+  (see `assets-src/textures/build.mjs` for the contract and `paintlib.mjs` for helpers and
+  fonts). Each layer is 512×512 albedo (+ optional 256×256 night emissive). Reference layers
+  by name through the `L(name)` lookup. Texture repeats are in world metres (`Mat.tile`).
+  Window walls: **one window per texture repeat**, emissive alpha 1 on the glass so the shader
+  can light each window at random at night.
+- **Vertical gradient:** `aGrad` 0 at the foot of a wall → 1 at its top (the shader darkens and
+  saturates the base). Use -1 for ground-level horizontal surfaces.
+- **Painted, unlined look:** no ink on buildings, trees or walls, so their edges must read
+  through colour: painted frames, trims, darker panel edges, soft gradients. Flat colour areas
+  and soft gradients; never noise speckle or photo texture.
+- **Lights:** pieces that emit light at night (lamp heads, lit signs, lanterns, vending
+  machines) report them in their build result as `{ x, y, z, r, g, b, radius }` in local
+  coordinates, so the chunk builder can bake their pools onto the street and add halos.
+- **Tri budgets:** near building 300–2,500 triangles, far skyline building ≤ 80, street prop
+  ≤ 400, tree ≤ 500.
+- **Preview:** register entries in `src/world/kit/catalog_<area>.ts` (see `catalog.ts`) and
+  render them with `node tools/shoot-kit.mjs <outdir> --group <g> --times day,night`.
