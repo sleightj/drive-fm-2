@@ -556,7 +556,9 @@ export class Roadside {
     if (!sr || sr.clear < 12) { this.stats.rejected++; return null; }
     p.pointAt(s, _pt);
     const ux = Math.sin(_pt.h), uz = Math.cos(_pt.h);
-    const setback = kind === 'building' ? 0.15 : 0.3;
+    // with no sidewalk (old town and edge back streets) a building stands behind a narrow
+    // gutter strip, right by the road
+    const setback = kind === 'building' ? (sr.walk > 0 ? 0.15 : 0.45) : 0.3;
     for (let attempt = 0; attempt < 2; attempt++) {
       const ww = attempt === 0 ? w : w * 0.6;
       if (ww < 5) break;
